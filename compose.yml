@@ -1,0 +1,8 @@
+services:
+  tunnel-hub-website:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${WEBSITE_HTTP_PORT:-11963}:80"
+    restart: unless-stopped
