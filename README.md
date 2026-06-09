@@ -6,6 +6,8 @@ The website is deployed as a standalone static site container. It intentionally 
 
 ## Commands
 
+Copy `.env.example` to `.env` for local development, then adjust the API base URL or dev proxy target as needed. Vite loads `.env` automatically for the website, and `compose.yml` uses `WEBSITE_HTTP_PORT` from the same file.
+
 ```bash
 npm install
 npm test
@@ -16,8 +18,10 @@ npm run dev
 For local development with a separate Relay:
 
 ```bash
-VITE_PROXY_TARGET=http://127.0.0.1:8080 npm run dev
+npm run dev
 ```
+
+Set `VITE_PROXY_TARGET` in `.env` if the Relay is not running at `http://127.0.0.1:8080`. Leave `VITE_API_BASE_URL` empty for same-origin production deployments.
 
 ## Production
 
