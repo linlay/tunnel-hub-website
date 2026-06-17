@@ -1,5 +1,7 @@
+name: tunnel-hub
+
 services:
-  tunnel-hub-website:
+  website:
     build:
       context: .
       dockerfile: Dockerfile
