@@ -2,6 +2,8 @@ name: tunnel-hub
 
 services:
   website:
+    image: tunnel-hub-website
+    container_name: tunnel-hub-website
     build:
       context: .
       dockerfile: Dockerfile
