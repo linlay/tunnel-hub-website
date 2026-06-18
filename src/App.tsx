@@ -3,13 +3,17 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Copy,
   Globe2,
   KeyRound,
+  Languages,
   LayoutDashboard,
   Link2,
   LogOut,
+  Monitor,
+  Moon,
   Pencil,
   Plus,
   RefreshCcw,
@@ -18,7 +22,9 @@ import {
   Server,
   ShieldCheck,
   SquareTerminal,
+  Sun,
   Trash2,
+  UserRound,
   Wifi
 } from 'lucide-react';
 import {
@@ -33,10 +39,21 @@ import {
   TunnelToken,
   api
 } from './lib/api';
+import {
+  ActivityFilter,
+  Locale,
+  ThemeMode,
+  TranslationKey,
+  Translator,
+  isLocale,
+  isThemeMode,
+  makeTranslator
+} from './lib/i18n';
 
 type LoadState = 'loading' | 'ready' | 'anonymous';
-type View = 'overview' | 'agents' | 'routes' | 'tokens' | 'apiKeys' | 'sessions' | 'events';
+type View = 'overview' | 'agents' | 'routes' | 'tokens' | 'apiKeys' | 'activity';
 type RouteMode = 'service' | 'host';
+type EffectiveTheme = 'light' | 'dark';
 
 type RouteForm = {
   id?: string;
@@ -48,6 +65,21 @@ type RouteForm = {
   active: boolean;
 };
 
+type ActivityItem = {
+  id: string;
+  category: ActivityFilter;
+  sortTime: number;
+  type: string;
+  title: string;
+  details: string;
+  meta: string;
+  status?: string;
+  statusTone?: 'good' | 'warn' | 'off';
+};
+
+const localeStorageKey = 'tunnel-hub-locale';
+const themeStorageKey = 'tunnel-hub-theme-mode';
+
 const emptyRoute = (tokenId = ''): RouteForm => ({
   mode: 'service',
   serviceName: '',
@@ -58,8 +90,36 @@ const emptyRoute = (tokenId = ''): RouteForm => ({
 });
 
 export function App() {
+  const [locale, setLocale] = useState<Locale>(initialLocale);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
+  const [effectiveTheme, setEffectiveTheme] = useState<EffectiveTheme>(() => resolveTheme(themeMode));
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [username, setUsername] = useState('');
+  const t = useMemo(() => makeTranslator(locale), [locale]);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    writeStorage(localeStorageKey, locale);
+  }, [locale]);
+
+  useEffect(() => {
+    writeStorage(themeStorageKey, themeMode);
+    const applyTheme = () => {
+      const nextTheme = resolveTheme(themeMode);
+      setEffectiveTheme(nextTheme);
+      document.documentElement.dataset.theme = nextTheme;
+      document.documentElement.dataset.themeMode = themeMode;
+    };
+    applyTheme();
+
+    if (themeMode !== 'system' || typeof window.matchMedia !== 'function') {
+      return undefined;
+    }
+
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    media.addEventListener?.('change', applyTheme);
+    return () => media.removeEventListener?.('change', applyTheme);
+  }, [themeMode]);
 
   useEffect(() => {
     api
@@ -72,12 +132,13 @@ export function App() {
   }, []);
 
   if (loadState === 'loading') {
-    return <div className="boot">Tunnel Hub</div>;
+    return <div className="boot">{t('appName')}</div>;
   }
 
   if (loadState === 'anonymous') {
     return (
       <Login
+        t={t}
         onLogin={(name) => {
           setUsername(name);
           setLoadState('ready');
@@ -88,6 +149,12 @@ export function App() {
 
   return (
     <Dashboard
+      effectiveTheme={effectiveTheme}
+      locale={locale}
+      setLocale={setLocale}
+      setThemeMode={setThemeMode}
+      t={t}
+      themeMode={themeMode}
       username={username}
       onLogout={() => {
         setUsername('');
@@ -97,7 +164,7 @@ export function App() {
   );
 }
 
-function Login({ onLogin }: { onLogin: (username: string) => void }) {
+function Login({ t, onLogin }: { t: Translator; onLogin: (username: string) => void }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin');
   const [error, setError] = useState('');
@@ -111,7 +178,7 @@ function Login({ onLogin }: { onLogin: (username: string) => void }) {
       const response = await api.login(username, password);
       onLogin(response.username);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -124,15 +191,15 @@ function Login({ onLogin }: { onLogin: (username: string) => void }) {
           <ShieldCheck size={24} />
         </div>
         <div>
-          <h1>Tunnel Hub</h1>
-          <p>管理入口</p>
+          <h1>{t('appName')}</h1>
+          <p>{t('managementEntry')}</p>
         </div>
         <label>
-          用户名
+          {t('username')}
           <input value={username} onChange={(event) => setUsername(event.target.value)} />
         </label>
         <label>
-          密码
+          {t('password')}
           <input
             type="password"
             value={password}
@@ -142,14 +209,32 @@ function Login({ onLogin }: { onLogin: (username: string) => void }) {
         {error ? <p className="error-line">{error}</p> : null}
         <button className="primary wide" type="submit" disabled={busy}>
           <ShieldCheck size={16} />
-          {busy ? '正在登录' : '登录'}
+          {busy ? t('loggingIn') : t('login')}
         </button>
       </form>
     </main>
   );
 }
 
-function Dashboard({ username, onLogout }: { username: string; onLogout: () => void }) {
+function Dashboard({
+  effectiveTheme,
+  locale,
+  setLocale,
+  setThemeMode,
+  t,
+  themeMode,
+  username,
+  onLogout
+}: {
+  effectiveTheme: EffectiveTheme;
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+  setThemeMode: (mode: ThemeMode) => void;
+  t: Translator;
+  themeMode: ThemeMode;
+  username: string;
+  onLogout: () => void;
+}) {
   const [view, setView] = useState<View>('overview');
   const [routes, setRoutes] = useState<Route[]>([]);
   const [tokens, setTokens] = useState<TunnelToken[]>([]);
@@ -194,9 +279,9 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
       setEvents(nextEvents ?? []);
       setMetrics(nextMetrics);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refresh();
@@ -229,7 +314,7 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     setNotice('');
     try {
       if (!routeForm.tokenId) {
-        throw new Error('请选择 Agent');
+        throw new Error(t('errorChooseDesktopAgent'));
       }
       const input: RouteInput = {
         publicHost: routeForm.publicHost.trim(),
@@ -239,29 +324,29 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
       };
       if (routeForm.id) {
         await api.updateRoute(routeForm.id, input);
-        setNotice('网站已保存');
+        setNotice(t('webAppSaved'));
       } else if (routeForm.mode === 'service') {
         if (!routeForm.serviceName.trim()) {
-          throw new Error('请输入服务名');
+          throw new Error(t('errorEnterServiceName'));
         }
         await api.publishService(routeForm.serviceName.trim(), {
           targetUrl: routeForm.targetUrl.trim(),
           tokenId: routeForm.tokenId,
           active: routeForm.active
         });
-        setNotice('网站已发布');
+        setNotice(t('webAppPublished'));
       } else {
         if (!routeForm.publicHost.trim()) {
-          throw new Error('请输入完整域名');
+          throw new Error(t('errorEnterPublicHost'));
         }
         await api.createRoute(input);
-        setNotice('网站已添加');
+        setNotice(t('webAppAdded'));
       }
       setRouteForm(emptyRoute(activeTokens[0]?.id ?? routeForm.tokenId));
       setView('routes');
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -273,10 +358,10 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     setNotice('');
     try {
       await api.deleteRoute(route.id);
-      setNotice('网站已删除');
+      setNotice(t('webAppDeleted'));
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -303,10 +388,10 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     try {
       const created = await api.createToken(tokenName.trim());
       setNewSecret(created.secret);
-      setNotice('令牌已创建');
+      setNotice(t('tokenCreated'));
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -318,10 +403,10 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     setNotice('');
     try {
       await api.deleteToken(token.id);
-      setNotice('令牌已停用');
+      setNotice(t('tokenDeactivated'));
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -335,10 +420,10 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     try {
       const created = await api.createApiKey(apiKeyName.trim());
       setNewApiKeySecret(created.secret);
-      setNotice('API Key 已创建');
+      setNotice(t('adminApiKeyCreated'));
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -350,10 +435,10 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
     setNotice('');
     try {
       await api.deleteApiKey(apiKey.id);
-      setNotice('API Key 已停用');
+      setNotice(t('adminApiKeyDeactivated'));
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
@@ -365,56 +450,57 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={effectiveTheme}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-icon">
             <Wifi size={20} />
           </div>
           <div>
-            <strong>Tunnel Hub</strong>
-            <span>Relay 控制台</span>
+            <strong>{t('appName')}</strong>
+            <span>{t('relayConsole')}</span>
           </div>
         </div>
-        <nav>
+        <nav aria-label="Main">
           <NavButton active={view === 'overview'} icon={<LayoutDashboard size={16} />} onClick={() => setView('overview')}>
-            概览
+            {t('navOverview')}
           </NavButton>
           <NavButton active={view === 'agents'} icon={<Server size={16} />} onClick={() => setView('agents')}>
-            Agent
+            {t('navAgents')}
           </NavButton>
           <NavButton active={view === 'routes'} icon={<Globe2 size={16} />} onClick={() => setView('routes')}>
-            网站
+            {t('navRoutes')}
           </NavButton>
           <NavButton active={view === 'tokens'} icon={<KeyRound size={16} />} onClick={() => setView('tokens')}>
-            令牌
+            {t('navTokens')}
           </NavButton>
-          <NavButton active={view === 'apiKeys'} icon={<ShieldCheck size={16} />} onClick={() => setView('apiKeys')}>
-            API Keys
-          </NavButton>
-          <NavButton active={view === 'sessions'} icon={<Clock3 size={16} />} onClick={() => setView('sessions')}>
-            连接历史
-          </NavButton>
-          <NavButton active={view === 'events'} icon={<Activity size={16} />} onClick={() => setView('events')}>
-            事件
+          <NavButton active={view === 'activity'} icon={<Activity size={16} />} onClick={() => setView('activity')}>
+            {t('navActivity')}
           </NavButton>
         </nav>
-        <button className="ghost sidebar-logout" onClick={logout}>
-          <LogOut size={16} />
-          退出
-        </button>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <h1>{viewTitle(view)}</h1>
-            <span>{username}</span>
+            <h1>{viewTitle(view, t)}</h1>
           </div>
-          <button className="ghost" onClick={refresh} title="刷新">
-            <RefreshCcw size={16} />
-            刷新
-          </button>
+          <div className="topbar-actions">
+            <button className="ghost" onClick={refresh} title={t('refresh')}>
+              <RefreshCcw size={16} />
+              {t('refresh')}
+            </button>
+            <UserMenu
+              locale={locale}
+              setLocale={setLocale}
+              setThemeMode={setThemeMode}
+              t={t}
+              themeMode={themeMode}
+              username={username}
+              onApiKeys={() => setView('apiKeys')}
+              onLogout={logout}
+            />
+          </div>
         </header>
 
         {error ? <div className="alert error">{error}</div> : null}
@@ -422,43 +508,48 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
 
         {view === 'overview' ? (
           <OverviewView
-            metrics={metrics}
-            activeRoutes={activeRoutes}
-            unassignedRoutes={unassignedRoutes}
-            routes={routes}
             agents={agents}
+            activeRoutes={activeRoutes}
             events={events}
+            locale={locale}
+            metrics={metrics}
             onlineTokenIds={onlineTokenIds}
+            routes={routes}
+            t={t}
             tokenById={tokenById}
+            unassignedRoutes={unassignedRoutes}
             onEditRoute={editRoute}
           />
         ) : null}
 
-        {view === 'agents' ? <AgentsView agents={agents} /> : null}
+        {view === 'agents' ? <AgentsView agents={agents} locale={locale} t={t} /> : null}
 
         {view === 'routes' ? (
           <RoutesView
-            routes={routes}
-            routeForm={routeForm}
-            setRouteForm={setRouteForm}
             activeTokens={activeTokens}
-            tokenById={tokenById}
-            onlineTokenIds={onlineTokenIds}
             busy={busy}
-            onSave={saveRoute}
+            onlineTokenIds={onlineTokenIds}
+            routeForm={routeForm}
+            routes={routes}
+            setRouteForm={setRouteForm}
+            t={t}
+            tokenById={tokenById}
             onDelete={removeRoute}
             onEdit={editRoute}
+            onSave={saveRoute}
           />
         ) : null}
 
         {view === 'tokens' ? (
           <TokensView
-            tokens={tokens}
-            tokenName={tokenName}
-            setTokenName={setTokenName}
-            newSecret={newSecret}
             agentCommand={agentCommand}
             busy={busy}
+            locale={locale}
+            newSecret={newSecret}
+            setTokenName={setTokenName}
+            t={t}
+            tokenName={tokenName}
+            tokens={tokens}
             onCreate={createToken}
             onDelete={removeToken}
           />
@@ -466,45 +557,142 @@ function Dashboard({ username, onLogout }: { username: string; onLogout: () => v
 
         {view === 'apiKeys' ? (
           <ApiKeysView
-            apiKeys={apiKeys}
             apiKeyName={apiKeyName}
-            setApiKeyName={setApiKeyName}
-            newApiKeySecret={newApiKeySecret}
+            apiKeys={apiKeys}
             busy={busy}
+            locale={locale}
+            newApiKeySecret={newApiKeySecret}
+            setApiKeyName={setApiKeyName}
+            t={t}
             onCreate={createApiKey}
             onDelete={removeApiKey}
           />
         ) : null}
 
-        {view === 'sessions' ? (
-          <SessionsView sessions={sessions} tokenById={tokenById} />
+        {view === 'activity' ? (
+          <ActivityView
+            events={events}
+            locale={locale}
+            sessions={sessions}
+            t={t}
+            tokenById={tokenById}
+          />
         ) : null}
-
-        {view === 'events' ? <EventsView events={events} /> : null}
       </section>
     </main>
   );
 }
 
+function UserMenu({
+  locale,
+  setLocale,
+  setThemeMode,
+  t,
+  themeMode,
+  username,
+  onApiKeys,
+  onLogout
+}: {
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+  setThemeMode: (mode: ThemeMode) => void;
+  t: Translator;
+  themeMode: ThemeMode;
+  username: string;
+  onApiKeys: () => void;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="user-menu">
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="user-trigger"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <UserRound size={16} />
+        <span>{username}</span>
+        <ChevronDown size={15} />
+      </button>
+      {open ? (
+        <div className="user-popover" role="menu">
+          <button
+            className="menu-command"
+            role="menuitem"
+            onClick={() => {
+              onApiKeys();
+              setOpen(false);
+            }}
+          >
+            <ShieldCheck size={16} />
+            {t('adminApiKeys')}
+          </button>
+          <div className="menu-group">
+            <span>
+              <Languages size={15} />
+              {t('language')}
+            </span>
+            <div className="menu-segmented">
+              <button className={locale === 'zh-CN' ? 'active' : ''} onClick={() => setLocale('zh-CN')}>
+                中文
+              </button>
+              <button className={locale === 'en-US' ? 'active' : ''} onClick={() => setLocale('en-US')}>
+                EN
+              </button>
+            </div>
+          </div>
+          <div className="menu-group">
+            <span>
+              {themeMode === 'dark' ? <Moon size={15} /> : themeMode === 'light' ? <Sun size={15} /> : <Monitor size={15} />}
+              {t('theme')}
+            </span>
+            <div className="menu-segmented three">
+              <button className={themeMode === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}>
+                {t('light')}
+              </button>
+              <button className={themeMode === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}>
+                {t('dark')}
+              </button>
+              <button className={themeMode === 'system' ? 'active' : ''} onClick={() => setThemeMode('system')}>
+                {t('system')}
+              </button>
+            </div>
+          </div>
+          <button className="menu-command danger" role="menuitem" onClick={onLogout}>
+            <LogOut size={16} />
+            {t('logout')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function OverviewView({
-  metrics,
-  activeRoutes,
-  unassignedRoutes,
-  routes,
   agents,
+  activeRoutes,
   events,
+  locale,
+  metrics,
   onlineTokenIds,
+  routes,
+  t,
   tokenById,
+  unassignedRoutes,
   onEditRoute
 }: {
-  metrics: Metrics;
-  activeRoutes: number;
-  unassignedRoutes: number;
-  routes: Route[];
   agents: AgentRecord[];
+  activeRoutes: number;
   events: EventLog[];
+  locale: Locale;
+  metrics: Metrics;
   onlineTokenIds: Set<string>;
+  routes: Route[];
+  t: Translator;
   tokenById: Map<string, TunnelToken>;
+  unassignedRoutes: number;
   onEditRoute: (route: Route) => void;
 }) {
   return (
@@ -512,17 +700,17 @@ function OverviewView({
       <section className="status-grid" aria-label="Tunnel status">
         <MetricTile
           icon={metrics.activeAgentCount > 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-          label="在线 Agent"
+          label={t('onlineDesktopAgents')}
           value={metrics.activeAgentCount}
           tone={metrics.activeAgentCount > 0 ? 'good' : 'warn'}
         />
-        <MetricTile icon={<Globe2 size={18} />} label="已部署网站" value={routes.filter((route) => route.tokenId).length} />
-        <MetricTile icon={<RouteIcon size={18} />} label="启用路由" value={activeRoutes} />
-        <MetricTile icon={<Activity size={18} />} label="活跃 Stream" value={metrics.activeStreams} />
-        <MetricTile icon={<Server size={18} />} label="累计 Stream" value={metrics.totalStreams} />
+        <MetricTile icon={<Globe2 size={18} />} label={t('deployedWebApps')} value={routes.filter((route) => route.tokenId).length} />
+        <MetricTile icon={<RouteIcon size={18} />} label={t('activeRoutes')} value={activeRoutes} />
+        <MetricTile icon={<Activity size={18} />} label={t('activeStreams')} value={metrics.activeStreams} />
+        <MetricTile icon={<Server size={18} />} label={t('totalStreams')} value={metrics.totalStreams} />
         <MetricTile
           icon={unassignedRoutes > 0 ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
-          label="待分配"
+          label={t('unassigned')}
           value={unassignedRoutes}
           tone={unassignedRoutes > 0 ? 'warn' : 'good'}
         />
@@ -530,61 +718,62 @@ function OverviewView({
 
       <section className="grid-two">
         <section className="panel">
-          <PanelTitle icon={<Server size={18} />} title="Agent 状态" />
+          <PanelTitle icon={<Server size={18} />} title={t('navAgents')} />
           <div className="agent-list compact">
-            {agents.length === 0 ? <span className="empty">暂无 Agent 令牌</span> : null}
+            {agents.length === 0 ? <span className="empty">{t('noDesktopAgentTokens')}</span> : null}
             {agents.slice(0, 4).map((agent) => (
-              <AgentSummary key={agent.token.id} agent={agent} />
+              <AgentSummary key={agent.token.id} agent={agent} t={t} />
             ))}
           </div>
         </section>
 
         <section className="panel">
-          <PanelTitle icon={<Activity size={18} />} title="最近事件" />
-          <EventList events={events.slice(0, 6)} />
+          <PanelTitle icon={<Activity size={18} />} title={t('recentActivity')} />
+          <EventList events={events.slice(0, 6)} locale={locale} t={t} />
         </section>
       </section>
 
       <section className="panel">
-        <PanelTitle icon={<Globe2 size={18} />} title="网站概览" />
+        <PanelTitle icon={<Globe2 size={18} />} title={t('webAppOverview')} />
         <RoutesTable
-          routes={routes.slice(0, 8)}
-          tokenById={tokenById}
           onlineTokenIds={onlineTokenIds}
-          onEdit={onEditRoute}
-          onDelete={() => undefined}
           readonlyDelete
+          routes={routes.slice(0, 8)}
+          t={t}
+          tokenById={tokenById}
+          onDelete={() => undefined}
+          onEdit={onEditRoute}
         />
       </section>
     </>
   );
 }
 
-function AgentsView({ agents }: { agents: AgentRecord[] }) {
+function AgentsView({ agents, locale, t }: { agents: AgentRecord[]; locale: Locale; t: Translator }) {
   return (
     <section className="agent-grid">
-      {agents.length === 0 ? <div className="empty panel">暂无 Agent 令牌</div> : null}
+      {agents.length === 0 ? <div className="empty panel">{t('noDesktopAgentTokens')}</div> : null}
       {agents.map((agent) => (
         <article className="agent-card" key={agent.token.id}>
           <div className="agent-head">
             <div>
-              <span className="eyebrow">Agent</span>
+              <span className="eyebrow">{t('navAgents')}</span>
               <h2>{agent.token.name}</h2>
             </div>
-            <StatusPill label={agent.online ? '在线' : agent.token.active ? '离线' : '停用'} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
+            <StatusPill label={agent.online ? t('online') : agent.token.active ? t('offline') : t('disabled')} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
           </div>
           <div className="agent-meta">
-            <span>令牌前缀</span>
+            <span>{t('tokenPrefix')}</span>
             <code>{agent.token.tokenPrefix}</code>
-            <span>远端地址</span>
-            <strong>{agent.remoteAddr ?? '未连接'}</strong>
-            <span>连接时长</span>
-            <strong>{agent.connectedAt ? formatDuration(agent.connectedAt) : '未连接'}</strong>
-            <span>当前会话</span>
-            <code>{agent.sessionId ? shortID(agent.sessionId) : '无'}</code>
+            <span>{t('remoteAddress')}</span>
+            <strong>{agent.remoteAddr ?? t('offline')}</strong>
+            <span>{t('duration')}</span>
+            <strong>{agent.connectedAt ? formatDuration(agent.connectedAt, undefined, locale) : t('offline')}</strong>
+            <span>{t('currentSession')}</span>
+            <code>{agent.sessionId ? shortID(agent.sessionId) : t('noSession')}</code>
           </div>
           <div className="route-chips">
-            {agent.routes.length === 0 ? <span className="muted">未部署网站</span> : null}
+            {agent.routes.length === 0 ? <span className="muted">{t('noWebApps')}</span> : null}
             {agent.routes.map((route) => (
               <span className="chip" key={route.id}>
                 {route.publicHost}
@@ -598,54 +787,56 @@ function AgentsView({ agents }: { agents: AgentRecord[] }) {
 }
 
 function RoutesView({
-  routes,
-  routeForm,
-  setRouteForm,
   activeTokens,
-  tokenById,
-  onlineTokenIds,
   busy,
-  onSave,
+  onlineTokenIds,
+  routeForm,
+  routes,
+  setRouteForm,
+  t,
+  tokenById,
   onDelete,
-  onEdit
+  onEdit,
+  onSave
 }: {
-  routes: Route[];
-  routeForm: RouteForm;
-  setRouteForm: (updater: RouteForm | ((current: RouteForm) => RouteForm)) => void;
   activeTokens: TunnelToken[];
-  tokenById: Map<string, TunnelToken>;
-  onlineTokenIds: Set<string>;
   busy: boolean;
-  onSave: (event: FormEvent) => void;
+  onlineTokenIds: Set<string>;
+  routeForm: RouteForm;
+  routes: Route[];
+  setRouteForm: (updater: RouteForm | ((current: RouteForm) => RouteForm)) => void;
+  t: Translator;
+  tokenById: Map<string, TunnelToken>;
   onDelete: (route: Route) => void;
   onEdit: (route: Route) => void;
+  onSave: (event: FormEvent) => void;
 }) {
   return (
     <section className="stack">
       <section className="panel">
-        <PanelTitle icon={<Plus size={18} />} title={routeForm.id ? '编辑网站' : '部署网站'} />
+        <PanelTitle icon={<Plus size={18} />} title={routeForm.id ? t('editWebApp') : t('deployWebApp')} />
         <form className="deploy-form" onSubmit={onSave}>
           {!routeForm.id ? (
-            <div className="segmented" role="group" aria-label="部署模式">
+            <div className="segmented" role="group" aria-label={t('deployWebApp')}>
               <button
                 type="button"
                 className={routeForm.mode === 'service' ? 'active' : ''}
                 onClick={() => setRouteForm((current) => ({ ...current, mode: 'service' }))}
               >
-                服务名
+                {t('serviceName')}
               </button>
               <button
                 type="button"
                 className={routeForm.mode === 'host' ? 'active' : ''}
                 onClick={() => setRouteForm((current) => ({ ...current, mode: 'host' }))}
               >
-                完整域名
+                {t('fullDomain')}
               </button>
             </div>
           ) : null}
           {routeForm.mode === 'service' && !routeForm.id ? (
             <label>
-              服务名
+              {t('serviceName')}
               <input
                 value={routeForm.serviceName}
                 onChange={(event) =>
@@ -656,7 +847,7 @@ function RoutesView({
             </label>
           ) : (
             <label>
-              公开域名
+              {t('publicDomain')}
               <input
                 value={routeForm.publicHost}
                 onChange={(event) =>
@@ -667,7 +858,7 @@ function RoutesView({
             </label>
           )}
           <label>
-            本地目标
+            {t('localTarget')}
             <input
               value={routeForm.targetUrl}
               onChange={(event) => setRouteForm((current) => ({ ...current, targetUrl: event.target.value }))}
@@ -675,12 +866,12 @@ function RoutesView({
             />
           </label>
           <label>
-            Agent
+            {t('navAgents')}
             <select
               value={routeForm.tokenId}
               onChange={(event) => setRouteForm((current) => ({ ...current, tokenId: event.target.value }))}
             >
-              <option value="">选择 Agent</option>
+              <option value="">{t('selectDesktopAgent')}</option>
               {activeTokens.map((token) => (
                 <option value={token.id} key={token.id}>
                   {token.name}
@@ -694,63 +885,67 @@ function RoutesView({
               checked={routeForm.active}
               onChange={(event) => setRouteForm((current) => ({ ...current, active: event.target.checked }))}
             />
-            启用
+            {t('enabled')}
           </label>
           <button className="primary" disabled={busy || activeTokens.length === 0}>
             {routeForm.id ? <Save size={16} /> : <Plus size={16} />}
-            {routeForm.id ? '保存' : '部署'}
+            {routeForm.id ? t('save') : t('deployWebApp')}
           </button>
         </form>
       </section>
 
       <section className="panel">
-        <PanelTitle icon={<Globe2 size={18} />} title="网站列表" />
-        <RoutesTable routes={routes} tokenById={tokenById} onlineTokenIds={onlineTokenIds} onEdit={onEdit} onDelete={onDelete} />
+        <PanelTitle icon={<Globe2 size={18} />} title={t('webAppList')} />
+        <RoutesTable routes={routes} t={t} tokenById={tokenById} onlineTokenIds={onlineTokenIds} onEdit={onEdit} onDelete={onDelete} />
       </section>
     </section>
   );
 }
 
 function TokensView({
-  tokens,
-  tokenName,
-  setTokenName,
-  newSecret,
   agentCommand,
   busy,
+  locale,
+  newSecret,
+  setTokenName,
+  t,
+  tokenName,
+  tokens,
   onCreate,
   onDelete
 }: {
-  tokens: TunnelToken[];
-  tokenName: string;
-  setTokenName: (value: string) => void;
-  newSecret: string;
   agentCommand: string;
   busy: boolean;
+  locale: Locale;
+  newSecret: string;
+  setTokenName: (value: string) => void;
+  t: Translator;
+  tokenName: string;
+  tokens: TunnelToken[];
   onCreate: (event: FormEvent) => void;
   onDelete: (token: TunnelToken) => void;
 }) {
   return (
     <section className="grid-two">
       <section className="panel">
-        <PanelTitle icon={<KeyRound size={18} />} title="创建 Agent 令牌" />
+        <PanelTitle icon={<KeyRound size={18} />} title={t('createDesktopAgentToken')} />
         <form className="inline-form" onSubmit={onCreate}>
           <input value={tokenName} onChange={(event) => setTokenName(event.target.value)} placeholder="mac-mini-office" />
           <button className="primary" disabled={busy}>
             <Plus size={16} />
-            创建
+            {t('create')}
           </button>
         </form>
         {newSecret ? (
           <div className="secret-stack">
-            <SecretBox value={newSecret} title="令牌 Secret" />
+            <SecretBox value={newSecret} title={t('tokenSecret')} t={t} />
             <div className="command-box">
               <div>
                 <SquareTerminal size={16} />
-                <span>连接命令</span>
+                <span>{t('command')}</span>
               </div>
               <code>{agentCommand}</code>
-              <button className="icon" title="复制连接命令" onClick={() => copyText(agentCommand)}>
+              <button className="icon" title={t('copyCommand')} onClick={() => copyText(agentCommand)}>
                 <Copy size={15} />
               </button>
             </div>
@@ -759,17 +954,17 @@ function TokensView({
       </section>
 
       <section className="panel">
-        <PanelTitle icon={<KeyRound size={18} />} title="令牌列表" />
+        <PanelTitle icon={<KeyRound size={18} />} title={t('tokenList')} />
         <DataTable
-          empty="暂无令牌"
-          columns={['名称', '前缀', '最近使用', '状态', '']}
+          empty={t('noTokens')}
+          columns={[t('name'), t('prefix'), t('lastUsed'), t('status'), '']}
           rows={tokens.map((token) => [
             <strong className={token.active ? '' : 'muted'}>{token.name}</strong>,
             <code>{token.tokenPrefix}</code>,
-            token.lastUsedAt ? formatTime(token.lastUsedAt) : <span className="muted">从未</span>,
-            <StatusPill label={token.active ? '可用' : '停用'} tone={token.active ? 'good' : 'off'} />,
+            token.lastUsedAt ? formatTime(token.lastUsedAt, locale) : <span className="muted">{t('never')}</span>,
+            <StatusPill label={token.active ? t('available') : t('disabled')} tone={token.active ? 'good' : 'off'} />,
             token.active ? (
-              <button className="icon danger" title="停用令牌" onClick={() => onDelete(token)}>
+              <button className="icon danger" title={t('stopToken')} onClick={() => onDelete(token)}>
                 <Trash2 size={15} />
               </button>
             ) : null
@@ -781,48 +976,52 @@ function TokensView({
 }
 
 function ApiKeysView({
-  apiKeys,
   apiKeyName,
-  setApiKeyName,
-  newApiKeySecret,
+  apiKeys,
   busy,
+  locale,
+  newApiKeySecret,
+  setApiKeyName,
+  t,
   onCreate,
   onDelete
 }: {
-  apiKeys: AdminApiKey[];
   apiKeyName: string;
-  setApiKeyName: (value: string) => void;
-  newApiKeySecret: string;
+  apiKeys: AdminApiKey[];
   busy: boolean;
+  locale: Locale;
+  newApiKeySecret: string;
+  setApiKeyName: (value: string) => void;
+  t: Translator;
   onCreate: (event: FormEvent) => void;
   onDelete: (apiKey: AdminApiKey) => void;
 }) {
   return (
     <section className="grid-two">
       <section className="panel">
-        <PanelTitle icon={<ShieldCheck size={18} />} title="创建 Admin API Key" />
+        <PanelTitle icon={<ShieldCheck size={18} />} title={t('createAdminApiKey')} />
         <form className="inline-form" onSubmit={onCreate}>
           <input value={apiKeyName} onChange={(event) => setApiKeyName(event.target.value)} placeholder="deploy-bot" />
           <button className="primary" disabled={busy}>
             <Plus size={16} />
-            创建
+            {t('create')}
           </button>
         </form>
-        {newApiKeySecret ? <SecretBox value={newApiKeySecret} title="API Key Secret" /> : null}
+        {newApiKeySecret ? <SecretBox value={newApiKeySecret} title={t('adminApiKeySecret')} t={t} /> : null}
       </section>
 
       <section className="panel">
-        <PanelTitle icon={<ShieldCheck size={18} />} title="API Key 列表" />
+        <PanelTitle icon={<ShieldCheck size={18} />} title={t('adminApiKeyList')} />
         <DataTable
-          empty="暂无 API Key"
-          columns={['名称', '前缀', '最近使用', '状态', '']}
+          empty={t('noApiKeys')}
+          columns={[t('name'), t('prefix'), t('lastUsed'), t('status'), '']}
           rows={apiKeys.map((apiKey) => [
             <strong className={apiKey.active ? '' : 'muted'}>{apiKey.name}</strong>,
             <code>{apiKey.keyPrefix}</code>,
-            apiKey.lastUsedAt ? formatTime(apiKey.lastUsedAt) : <span className="muted">从未</span>,
-            <StatusPill label={apiKey.active ? '可用' : '停用'} tone={apiKey.active ? 'good' : 'off'} />,
+            apiKey.lastUsedAt ? formatTime(apiKey.lastUsedAt, locale) : <span className="muted">{t('never')}</span>,
+            <StatusPill label={apiKey.active ? t('available') : t('disabled')} tone={apiKey.active ? 'good' : 'off'} />,
             apiKey.active ? (
-              <button className="icon danger" title="停用 API Key" onClick={() => onDelete(apiKey)}>
+              <button className="icon danger" title={t('stopApiKey')} onClick={() => onDelete(apiKey)}>
                 <Trash2 size={15} />
               </button>
             ) : null
@@ -833,74 +1032,105 @@ function ApiKeysView({
   );
 }
 
-function SessionsView({ sessions, tokenById }: { sessions: AgentSession[]; tokenById: Map<string, TunnelToken> }) {
+function ActivityView({
+  events,
+  locale,
+  sessions,
+  t,
+  tokenById
+}: {
+  events: EventLog[];
+  locale: Locale;
+  sessions: AgentSession[];
+  t: Translator;
+  tokenById: Map<string, TunnelToken>;
+}) {
+  const [filter, setFilter] = useState<ActivityFilter>('all');
+  const items = useMemo(() => buildActivityItems(sessions, events, tokenById, t, locale), [events, locale, sessions, t, tokenById]);
+  const visibleItems = filter === 'all' ? items : items.filter((item) => item.category === filter);
+  const filters: ActivityFilter[] = ['all', 'connections', 'webApps', 'tokens', 'apiKeys', 'system'];
+
   return (
     <section className="panel">
-      <PanelTitle icon={<Clock3 size={18} />} title="连接历史" />
-      <DataTable
-        empty="暂无连接历史"
-        columns={['Agent', 'Session', '远端地址', '连接时间', '持续时间', '状态']}
-        rows={sessions.map((session) => [
-          <strong>{tokenById.get(session.tokenId)?.name ?? shortID(session.tokenId)}</strong>,
-          <code>{shortID(session.id)}</code>,
-          session.remoteAddr,
-          formatTime(session.connectedAt),
-          formatDuration(session.connectedAt, session.disconnectedAt),
-          session.disconnectedAt ? (
-            <StatusPill label="已断开" tone="off" />
-          ) : (
-            <StatusPill label="在线" tone="good" />
-          )
-        ])}
-      />
+      <PanelTitle icon={<Activity size={18} />} title={t('activityLog')} />
+      <div className="filter-tabs" role="tablist" aria-label={t('activityLog')}>
+        {filters.map((item) => (
+          <button
+            key={item}
+            className={filter === item ? 'active' : ''}
+            role="tab"
+            aria-selected={filter === item}
+            onClick={() => setFilter(item)}
+          >
+            {activityFilterLabel(item, t)}
+          </button>
+        ))}
+      </div>
+      <ActivityList items={visibleItems} locale={locale} t={t} />
     </section>
   );
 }
 
-function EventsView({ events }: { events: EventLog[] }) {
+function ActivityList({ items, locale, t }: { items: ActivityItem[]; locale: Locale; t: Translator }) {
+  if (items.length === 0) {
+    return <div className="empty">{t('noActivity')}</div>;
+  }
   return (
-    <section className="panel">
-      <PanelTitle icon={<Activity size={18} />} title="事件" />
-      <EventList events={events} />
-    </section>
+    <div className="activity-list">
+      {items.map((item) => (
+        <div className="activity-row" key={item.id}>
+          <span className="activity-category">{activityFilterLabel(item.category, t)}</span>
+          <div className="activity-main">
+            <strong>{item.title}</strong>
+            <small>{item.details}</small>
+            <small>{item.meta}</small>
+          </div>
+          <code>{item.type}</code>
+          {item.status && item.statusTone ? <StatusPill label={item.status} tone={item.statusTone} /> : <span />}
+          <time>{formatTime(new Date(item.sortTime).toISOString(), locale)}</time>
+        </div>
+      ))}
+    </div>
   );
 }
 
 function RoutesTable({
-  routes,
-  tokenById,
   onlineTokenIds,
-  onEdit,
+  readonlyDelete,
+  routes,
+  t,
+  tokenById,
   onDelete,
-  readonlyDelete
+  onEdit
 }: {
-  routes: Route[];
-  tokenById: Map<string, TunnelToken>;
   onlineTokenIds: Set<string>;
-  onEdit: (route: Route) => void;
-  onDelete: (route: Route) => void;
   readonlyDelete?: boolean;
+  routes: Route[];
+  t: Translator;
+  tokenById: Map<string, TunnelToken>;
+  onDelete: (route: Route) => void;
+  onEdit: (route: Route) => void;
 }) {
   return (
     <DataTable
-      empty="暂无网站"
-      columns={['网站', '本地目标', 'Agent', '状态', '']}
+      empty={t('noWebApps')}
+      columns={[t('webApp'), t('localTarget'), t('navAgents'), t('status'), '']}
       rows={routes.map((route) => [
         <div className="host-cell">
           <strong>{route.publicHost}</strong>
-          <button className="inline-icon" title="复制公开 URL" onClick={() => copyText(publicURL(route.publicHost))}>
+          <button className="inline-icon" title={t('copyPublicUrl')} onClick={() => copyText(publicURL(route.publicHost))}>
             <Link2 size={14} />
           </button>
         </div>,
         <code>{route.targetUrl}</code>,
-        route.tokenId ? tokenById.get(route.tokenId)?.name ?? shortID(route.tokenId) : <span className="muted">未分配</span>,
-        routeStatus(route, onlineTokenIds),
+        route.tokenId ? tokenById.get(route.tokenId)?.name ?? shortID(route.tokenId) : <span className="muted">{t('unassigned')}</span>,
+        routeStatus(route, onlineTokenIds, t),
         <div className="row-actions">
-          <button className="icon" title="编辑网站" onClick={() => onEdit(route)}>
+          <button className="icon" title={t('editWebApp')} onClick={() => onEdit(route)}>
             <Pencil size={15} />
           </button>
           {readonlyDelete ? null : (
-            <button className="icon danger" title="删除网站" onClick={() => onDelete(route)}>
+            <button className="icon danger" title={t('webAppDeleted')} onClick={() => onDelete(route)}>
               <Trash2 size={15} />
             </button>
           )}
@@ -910,43 +1140,28 @@ function RoutesTable({
   );
 }
 
-function AgentSummary({ agent }: { agent: AgentRecord }) {
-  return (
-    <div className="agent-summary">
-      <div>
-        <strong>{agent.token.name}</strong>
-        <span>{agent.online ? agent.remoteAddr : '未连接'}</span>
-      </div>
-      <div>
-        <StatusPill label={agent.online ? '在线' : agent.token.active ? '离线' : '停用'} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
-        <small>{agent.routeCount} 个网站</small>
-      </div>
-    </div>
-  );
-}
-
-function EventList({ events }: { events: EventLog[] }) {
+function EventList({ events, locale, t }: { events: EventLog[]; locale: Locale; t: Translator }) {
   return (
     <div className="event-list">
-      {events.length === 0 ? <span className="empty">暂无事件</span> : null}
+      {events.length === 0 ? <span className="empty">{t('noActivity')}</span> : null}
       {events.map((event) => (
         <div className="event-row" key={event.id}>
           <span>{event.type}</span>
           <strong>{event.message}</strong>
           <small>{event.details}</small>
-          <time>{formatTime(event.createdAt)}</time>
+          <time>{formatTime(event.createdAt, locale)}</time>
         </div>
       ))}
     </div>
   );
 }
 
-function SecretBox({ value, title }: { value: string; title: string }) {
+function SecretBox({ value, title, t }: { value: string; title: string; t: Translator }) {
   return (
     <div className="secret-box">
       <span>{title}</span>
       <code>{value}</code>
-      <button className="icon" title="复制" onClick={() => copyText(value)}>
+      <button className="icon" title={t('copy')} onClick={() => copyText(value)}>
         <Copy size={15} />
       </button>
     </div>
@@ -1041,34 +1256,111 @@ function StatusPill({ label, tone }: { label: string; tone: 'good' | 'warn' | 'o
   return <span className={`pill ${tone}`}>{label}</span>;
 }
 
-function routeStatus(route: Route, onlineTokenIds: Set<string>) {
+function AgentSummary({ agent, t }: { agent: AgentRecord; t: Translator }) {
+  return (
+    <div className="agent-summary">
+      <div>
+        <strong>{agent.token.name}</strong>
+        <span>{agent.online ? agent.remoteAddr : t('offline')}</span>
+      </div>
+      <div>
+        <StatusPill label={agent.online ? t('online') : agent.token.active ? t('offline') : t('disabled')} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
+        <small>{formatTemplate(t('webAppsCount'), { count: agent.routeCount })}</small>
+      </div>
+    </div>
+  );
+}
+
+function buildActivityItems(
+  sessions: AgentSession[],
+  events: EventLog[],
+  tokenById: Map<string, TunnelToken>,
+  t: Translator,
+  locale: Locale
+) {
+  const sessionItems: ActivityItem[] = sessions.map((session) => {
+    const disconnected = Boolean(session.disconnectedAt);
+    return {
+      id: `session-${session.id}`,
+      category: 'connections',
+      sortTime: new Date(session.connectedAt).getTime(),
+      type: t('session'),
+      title: tokenById.get(session.tokenId)?.name ?? shortID(session.tokenId),
+      details: `${t('remoteAddress')}: ${session.remoteAddr}`,
+      meta: `${t('duration')}: ${formatDuration(session.connectedAt, session.disconnectedAt, locale)}`,
+      status: disconnected ? t('disconnected') : t('online'),
+      statusTone: disconnected ? 'off' : 'good'
+    };
+  });
+
+  const eventItems: ActivityItem[] = events.map((event) => ({
+    id: `event-${event.id}`,
+    category: eventCategory(event.type),
+    sortTime: new Date(event.createdAt).getTime(),
+    type: event.type,
+    title: event.message,
+    details: event.details || t('details'),
+    meta: t('event')
+  }));
+
+  return [...sessionItems, ...eventItems].sort((a, b) => b.sortTime - a.sortTime);
+}
+
+function eventCategory(type: string): ActivityFilter {
+  if (type.startsWith('route') || type.startsWith('service')) {
+    return 'webApps';
+  }
+  if (type.startsWith('token')) {
+    return 'tokens';
+  }
+  if (type.startsWith('admin_api_key')) {
+    return 'apiKeys';
+  }
+  if (type.startsWith('agent') || type.startsWith('desktop_device')) {
+    return 'connections';
+  }
+  return 'system';
+}
+
+function activityFilterLabel(filter: ActivityFilter, t: Translator) {
+  const labels: Record<ActivityFilter, TranslationKey> = {
+    all: 'all',
+    connections: 'activityConnections',
+    webApps: 'activityWebApps',
+    tokens: 'activityTokens',
+    apiKeys: 'activityApiKeys',
+    system: 'activitySystem'
+  };
+  return t(labels[filter]);
+}
+
+function routeStatus(route: Route, onlineTokenIds: Set<string>, t: Translator) {
   if (!route.tokenId) {
-    return <StatusPill label="需分配" tone="warn" />;
+    return <StatusPill label={t('routeNeedsAgent')} tone="warn" />;
   }
   if (!route.active) {
-    return <StatusPill label="停用" tone="off" />;
+    return <StatusPill label={t('disabled')} tone="off" />;
   }
   if (!onlineTokenIds.has(route.tokenId)) {
-    return <StatusPill label="Agent 离线" tone="warn" />;
+    return <StatusPill label={t('webAppOffline')} tone="warn" />;
   }
-  return <StatusPill label="运行中" tone="good" />;
+  return <StatusPill label={t('running')} tone="good" />;
 }
 
-function viewTitle(view: View) {
-  const titles: Record<View, string> = {
-    overview: '概览',
-    agents: 'Agent',
-    routes: '网站',
-    tokens: '令牌',
-    apiKeys: 'API Keys',
-    sessions: '连接历史',
-    events: '事件'
+function viewTitle(view: View, t: Translator) {
+  const titles: Record<View, TranslationKey> = {
+    overview: 'navOverview',
+    agents: 'navAgents',
+    routes: 'navRoutes',
+    tokens: 'navTokens',
+    apiKeys: 'adminApiKeys',
+    activity: 'navActivity'
   };
-  return titles[view];
+  return t(titles[view]);
 }
 
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', {
+function formatTime(value: string, locale: Locale) {
+  return new Intl.DateTimeFormat(locale, {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -1076,23 +1368,35 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
-function formatDuration(start: string, end?: string) {
+function formatDuration(start: string, end: string | undefined, locale: Locale) {
   const startTime = new Date(start).getTime();
   const endTime = end ? new Date(end).getTime() : Date.now();
   const seconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
+  if (locale === 'zh-CN') {
+    if (days > 0) {
+      return `${days}天 ${hours}小时`;
+    }
+    if (hours > 0) {
+      return `${hours}小时 ${minutes}分钟`;
+    }
+    if (minutes > 0) {
+      return `${minutes}分钟`;
+    }
+    return `${seconds}秒`;
+  }
   if (days > 0) {
-    return `${days}天 ${hours}小时`;
+    return `${days}d ${hours}h`;
   }
   if (hours > 0) {
-    return `${hours}小时 ${minutes}分钟`;
+    return `${hours}h ${minutes}m`;
   }
   if (minutes > 0) {
-    return `${minutes}分钟`;
+    return `${minutes}m`;
   }
-  return `${seconds}秒`;
+  return `${seconds}s`;
 }
 
 function shortID(value: string) {
@@ -1118,9 +1422,53 @@ function copyText(value: string) {
   void navigator.clipboard?.writeText(value);
 }
 
-function errorMessage(err: unknown) {
+function errorMessage(err: unknown, t: Translator) {
   if (err instanceof ApiError || err instanceof Error) {
     return err.message;
   }
-  return '请求失败';
+  return t('requestFailed');
+}
+
+function formatTemplate(template: string, values: Record<string, string | number>) {
+  return Object.entries(values).reduce((next, [key, value]) => next.replace(`{${key}}`, String(value)), template);
+}
+
+function initialLocale(): Locale {
+  const stored = readStorage(localeStorageKey);
+  if (isLocale(stored)) {
+    return stored;
+  }
+  const language = typeof navigator === 'undefined' ? '' : navigator.language.toLowerCase();
+  return language.startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+function initialThemeMode(): ThemeMode {
+  const stored = readStorage(themeStorageKey);
+  return isThemeMode(stored) ? stored : 'system';
+}
+
+function resolveTheme(mode: ThemeMode): EffectiveTheme {
+  if (mode === 'light' || mode === 'dark') {
+    return mode;
+  }
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'light';
+}
+
+function readStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore unavailable storage, such as hardened privacy contexts.
+  }
 }
