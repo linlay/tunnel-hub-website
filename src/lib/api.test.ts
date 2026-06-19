@@ -38,12 +38,15 @@ describe('api client', () => {
     await expect(api.routes()).rejects.toEqual(new ApiError(401, 'authentication required'));
   });
 
-  it('creates admin api keys', async () => {
+  it('creates admin users', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
-          apiKey: { id: 'apikey_1', name: 'bot', keyPrefix: 'za_abc', active: true, createdAt: 'now' },
-          secret: 'za_secret'
+          id: '2',
+          username: 'ops',
+          status: 'active',
+          createdAt: 'now',
+          updatedAt: 'now'
         }),
         {
           status: 201,
@@ -52,15 +55,15 @@ describe('api client', () => {
       )
     );
 
-    const response = await api.createApiKey('bot');
+    const response = await api.createAdminUser({ username: 'ops', password: 'secret', status: 'active' });
 
-    expect(response.secret).toBe('za_secret');
+    expect(response.username).toBe('ops');
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/admin/api-keys',
+      '/api/admin/users',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
-        body: JSON.stringify({ name: 'bot' })
+        body: JSON.stringify({ username: 'ops', password: 'secret', status: 'active' })
       })
     );
   });

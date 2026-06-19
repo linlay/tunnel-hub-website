@@ -17,15 +17,6 @@ export type TunnelToken = {
   lastUsedAt?: string;
 };
 
-export type AdminApiKey = {
-  id: string;
-  name: string;
-  keyPrefix: string;
-  active: boolean;
-  createdAt: string;
-  lastUsedAt?: string;
-};
-
 export type AgentSession = {
   id: string;
   tokenId: string;
@@ -71,6 +62,10 @@ export type AgentRecord = {
 
 export type LoginResponse = {
   username: string;
+  userId?: string;
+  email?: string;
+  role?: string;
+  source?: string;
 };
 
 export type TokenCreateResponse = {
@@ -78,9 +73,23 @@ export type TokenCreateResponse = {
   secret: string;
 };
 
-export type AdminApiKeyCreateResponse = {
-  apiKey: AdminApiKey;
-  secret: string;
+export type AdminUser = {
+  id: string;
+  username: string;
+  status: 'active' | 'disabled';
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+};
+
+export type AdminUsersResponse = {
+  items: AdminUser[];
+};
+
+export type AdminUserInput = {
+  username: string;
+  password?: string;
+  status?: 'active' | 'disabled';
 };
 
 export type ServicePublishResponse = {
@@ -167,17 +176,23 @@ export const api = {
   deleteToken(id: string) {
     return request<{ ok: boolean }>(`/api/admin/tokens/${id}`, { method: 'DELETE' });
   },
-  apiKeys() {
-    return request<AdminApiKey[]>('/api/admin/api-keys');
+  adminUsers() {
+    return request<AdminUsersResponse>('/api/admin/users').then((response) => response.items ?? []);
   },
-  createApiKey(name: string) {
-    return request<AdminApiKeyCreateResponse>('/api/admin/api-keys', {
+  createAdminUser(input: Required<Pick<AdminUserInput, 'username' | 'password'>> & Pick<AdminUserInput, 'status'>) {
+    return request<AdminUser>('/api/admin/users', {
       method: 'POST',
-      body: JSON.stringify({ name })
+      body: JSON.stringify(input)
     });
   },
-  deleteApiKey(id: string) {
-    return request<{ ok: boolean }>(`/api/admin/api-keys/${id}`, { method: 'DELETE' });
+  updateAdminUser(id: string, input: AdminUserInput) {
+    return request<AdminUser>(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  },
+  disableAdminUser(id: string) {
+    return request<AdminUser>(`/api/admin/users/${id}`, { method: 'DELETE' });
   },
   service(name: string) {
     return request<ServicePublishResponse>(`/api/admin/services/${name}`);

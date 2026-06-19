@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { AgentRecord, AgentSession, EventLog, Metrics, Route, TunnelToken } from './lib/api';
+import { AdminUser, AgentRecord, AgentSession, EventLog, Metrics, Route, TunnelToken } from './lib/api';
 
 const now = new Date('2026-06-18T08:00:00.000Z').toISOString();
 
@@ -58,17 +58,18 @@ describe('App', () => {
     expect(await screen.findByText(/AGENT_RELAY_URL=ws:\/\/.*\/tunnel/)).toBeInTheDocument();
   });
 
-  it('opens Admin API Keys from the user menu', async () => {
+  it('opens admin user management from the user menu', async () => {
     installFetchMock(dashboardFixture());
 
     render(<App />);
 
     await screen.findByText('app.example.com');
     await userEvent.click(screen.getByRole('button', { name: /admin/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Admin API Keys/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /管理员管理/i }));
 
-    expect(screen.getByRole('heading', { name: /Admin API Keys/i })).toBeInTheDocument();
-    expect(screen.getByText('创建 Admin API Key')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /管理员管理/i })).toBeInTheDocument();
+    expect(screen.getByText('创建管理员')).toBeInTheDocument();
+    expect(screen.getAllByText('admin').length).toBeGreaterThan(0);
   });
 
   it('combines sessions and events in activity log and filters connections', async () => {
@@ -166,7 +167,16 @@ function dashboardFixture(overrides: Partial<FetchFixture> = {}): FetchFixture {
     routes: [route],
     tokens: [token],
     agents: [agent],
-    apiKeys: [],
+    adminUsers: [
+      {
+        id: '1',
+        username: 'admin',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        lastLoginAt: now
+      }
+    ],
     sessions: [],
     events: [],
     metrics: {
@@ -185,7 +195,7 @@ type FetchFixture = {
   routes: Route[];
   tokens: TunnelToken[];
   agents: AgentRecord[];
-  apiKeys: unknown[];
+  adminUsers: AdminUser[];
   sessions: AgentSession[];
   events: EventLog[];
   metrics: Metrics;
@@ -234,8 +244,20 @@ function installFetchMock(fixture: Partial<FetchFixture> = {}) {
     if (path === '/api/admin/agents') {
       return json(state.agents);
     }
-    if (path === '/api/admin/api-keys') {
-      return json(state.apiKeys);
+    if (path === '/api/admin/users' && method === 'POST') {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { username: string; status?: 'active' | 'disabled' };
+      const user: AdminUser = {
+        id: `user_${state.adminUsers.length + 1}`,
+        username: body.username,
+        status: body.status ?? 'active',
+        createdAt: now,
+        updatedAt: now
+      };
+      state.adminUsers = [...state.adminUsers, user];
+      return json(user, 201);
+    }
+    if (path === '/api/admin/users') {
+      return json({ items: state.adminUsers });
     }
     if (path === '/api/admin/sessions') {
       return json(state.sessions);

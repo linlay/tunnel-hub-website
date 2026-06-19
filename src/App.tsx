@@ -28,7 +28,7 @@ import {
   Wifi
 } from 'lucide-react';
 import {
-  AdminApiKey,
+  AdminUser,
   AgentRecord,
   AgentSession,
   ApiError,
@@ -51,9 +51,10 @@ import {
 } from './lib/i18n';
 
 type LoadState = 'loading' | 'ready' | 'anonymous';
-type View = 'overview' | 'agents' | 'routes' | 'tokens' | 'apiKeys' | 'activity';
+type View = 'overview' | 'agents' | 'routes' | 'tokens' | 'admins' | 'activity';
 type RouteMode = 'service' | 'host';
 type EffectiveTheme = 'light' | 'dark';
+type AdminUserStatus = 'active' | 'disabled';
 
 type RouteForm = {
   id?: string;
@@ -77,6 +78,13 @@ type ActivityItem = {
   statusTone?: 'good' | 'warn' | 'off';
 };
 
+type AdminUserForm = {
+  id?: string;
+  username: string;
+  password: string;
+  status: AdminUserStatus;
+};
+
 const localeStorageKey = 'tunnel-hub-locale';
 const themeStorageKey = 'tunnel-hub-theme-mode';
 
@@ -87,6 +95,12 @@ const emptyRoute = (tokenId = ''): RouteForm => ({
   targetUrl: 'http://127.0.0.1:3000',
   tokenId,
   active: true
+});
+
+const emptyAdminUserForm = (): AdminUserForm => ({
+  username: '',
+  password: '',
+  status: 'active'
 });
 
 export function App() {
@@ -239,7 +253,7 @@ function Dashboard({
   const [routes, setRoutes] = useState<Route[]>([]);
   const [tokens, setTokens] = useState<TunnelToken[]>([]);
   const [agents, setAgents] = useState<AgentRecord[]>([]);
-  const [apiKeys, setApiKeys] = useState<AdminApiKey[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [events, setEvents] = useState<EventLog[]>([]);
   const [metrics, setMetrics] = useState<Metrics>({
@@ -250,10 +264,9 @@ function Dashboard({
     activeStreams: 0
   });
   const [routeForm, setRouteForm] = useState<RouteForm>(emptyRoute());
+  const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm());
   const [tokenName, setTokenName] = useState('mac-mini-office');
-  const [apiKeyName, setApiKeyName] = useState('deploy-bot');
   const [newSecret, setNewSecret] = useState('');
-  const [newApiKeySecret, setNewApiKeySecret] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -261,12 +274,12 @@ function Dashboard({
   const refresh = useCallback(async () => {
     setError('');
     try {
-      const [nextRoutes, nextTokens, nextAgents, nextApiKeys, nextSessions, nextEvents, nextMetrics] =
+      const [nextRoutes, nextTokens, nextAgents, nextAdminUsers, nextSessions, nextEvents, nextMetrics] =
         await Promise.all([
           api.routes(),
           api.tokens(),
           api.agents(),
-          api.apiKeys(),
+          api.adminUsers(),
           api.sessions(),
           api.events(),
           api.metrics()
@@ -274,7 +287,7 @@ function Dashboard({
       setRoutes(nextRoutes ?? []);
       setTokens(nextTokens ?? []);
       setAgents(nextAgents ?? []);
-      setApiKeys(nextApiKeys ?? []);
+      setAdminUsers(nextAdminUsers ?? []);
       setSessions(nextSessions ?? []);
       setEvents(nextEvents ?? []);
       setMetrics(nextMetrics);
@@ -412,15 +425,36 @@ function Dashboard({
     }
   }
 
-  async function createApiKey(event: FormEvent) {
+  async function saveAdminUser(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const created = await api.createApiKey(apiKeyName.trim());
-      setNewApiKeySecret(created.secret);
-      setNotice(t('adminApiKeyCreated'));
+      const username = adminUserForm.username.trim();
+      const password = adminUserForm.password.trim();
+      if (!username) {
+        throw new Error(t('errorEnterAdminUsername'));
+      }
+      if (!adminUserForm.id && !password) {
+        throw new Error(t('errorEnterAdminPassword'));
+      }
+      if (adminUserForm.id) {
+        await api.updateAdminUser(adminUserForm.id, {
+          username,
+          ...(password ? { password } : {}),
+          status: adminUserForm.status
+        });
+        setNotice(t('adminUserUpdated'));
+      } else {
+        await api.createAdminUser({
+          username,
+          password,
+          status: adminUserForm.status
+        });
+        setNotice(t('adminUserCreated'));
+      }
+      setAdminUserForm(emptyAdminUserForm());
       await refresh();
     } catch (err) {
       setError(errorMessage(err, t));
@@ -429,13 +463,26 @@ function Dashboard({
     }
   }
 
-  async function removeApiKey(apiKey: AdminApiKey) {
+  function editAdminUser(user: AdminUser) {
+    setView('admins');
+    setAdminUserForm({
+      id: user.id,
+      username: user.username,
+      password: '',
+      status: user.status
+    });
+  }
+
+  async function disableAdminUser(user: AdminUser) {
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      await api.deleteApiKey(apiKey.id);
-      setNotice(t('adminApiKeyDeactivated'));
+      await api.disableAdminUser(user.id);
+      setNotice(t('adminUserDisabled'));
+      if (adminUserForm.id === user.id) {
+        setAdminUserForm(emptyAdminUserForm());
+      }
       await refresh();
     } catch (err) {
       setError(errorMessage(err, t));
@@ -497,7 +544,7 @@ function Dashboard({
               t={t}
               themeMode={themeMode}
               username={username}
-              onApiKeys={() => setView('apiKeys')}
+              onAdmins={() => setView('admins')}
               onLogout={logout}
             />
           </div>
@@ -555,17 +602,18 @@ function Dashboard({
           />
         ) : null}
 
-        {view === 'apiKeys' ? (
-          <ApiKeysView
-            apiKeyName={apiKeyName}
-            apiKeys={apiKeys}
+        {view === 'admins' ? (
+          <AdminUsersView
+            adminForm={adminUserForm}
+            adminUsers={adminUsers}
             busy={busy}
             locale={locale}
-            newApiKeySecret={newApiKeySecret}
-            setApiKeyName={setApiKeyName}
+            setAdminForm={setAdminUserForm}
             t={t}
-            onCreate={createApiKey}
-            onDelete={removeApiKey}
+            onCancel={() => setAdminUserForm(emptyAdminUserForm())}
+            onDisable={disableAdminUser}
+            onEdit={editAdminUser}
+            onSave={saveAdminUser}
           />
         ) : null}
 
@@ -590,7 +638,7 @@ function UserMenu({
   t,
   themeMode,
   username,
-  onApiKeys,
+  onAdmins,
   onLogout
 }: {
   locale: Locale;
@@ -599,7 +647,7 @@ function UserMenu({
   t: Translator;
   themeMode: ThemeMode;
   username: string;
-  onApiKeys: () => void;
+  onAdmins: () => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -622,12 +670,12 @@ function UserMenu({
             className="menu-command"
             role="menuitem"
             onClick={() => {
-              onApiKeys();
+              onAdmins();
               setOpen(false);
             }}
           >
             <ShieldCheck size={16} />
-            {t('adminApiKeys')}
+            {t('adminUsers')}
           </button>
           <div className="menu-group">
             <span>
@@ -975,56 +1023,95 @@ function TokensView({
   );
 }
 
-function ApiKeysView({
-  apiKeyName,
-  apiKeys,
+function AdminUsersView({
+  adminForm,
+  adminUsers,
   busy,
   locale,
-  newApiKeySecret,
-  setApiKeyName,
+  setAdminForm,
   t,
-  onCreate,
-  onDelete
+  onCancel,
+  onDisable,
+  onEdit,
+  onSave
 }: {
-  apiKeyName: string;
-  apiKeys: AdminApiKey[];
+  adminForm: AdminUserForm;
+  adminUsers: AdminUser[];
   busy: boolean;
   locale: Locale;
-  newApiKeySecret: string;
-  setApiKeyName: (value: string) => void;
+  setAdminForm: (updater: AdminUserForm | ((current: AdminUserForm) => AdminUserForm)) => void;
   t: Translator;
-  onCreate: (event: FormEvent) => void;
-  onDelete: (apiKey: AdminApiKey) => void;
+  onCancel: () => void;
+  onDisable: (user: AdminUser) => void;
+  onEdit: (user: AdminUser) => void;
+  onSave: (event: FormEvent) => void;
 }) {
   return (
     <section className="grid-two">
       <section className="panel">
-        <PanelTitle icon={<ShieldCheck size={18} />} title={t('createAdminApiKey')} />
-        <form className="inline-form" onSubmit={onCreate}>
-          <input value={apiKeyName} onChange={(event) => setApiKeyName(event.target.value)} placeholder="deploy-bot" />
+        <PanelTitle icon={<ShieldCheck size={18} />} title={adminForm.id ? t('editAdminUser') : t('createAdminUser')} />
+        <form className="deploy-form compact-form" onSubmit={onSave}>
+          <label>
+            {t('username')}
+            <input
+              value={adminForm.username}
+              onChange={(event) => setAdminForm((current) => ({ ...current, username: event.target.value }))}
+              placeholder="admin"
+            />
+          </label>
+          <label>
+            {adminForm.id ? t('newPassword') : t('password')}
+            <input
+              type="password"
+              value={adminForm.password}
+              onChange={(event) => setAdminForm((current) => ({ ...current, password: event.target.value }))}
+              placeholder={adminForm.id ? t('passwordOptional') : t('password')}
+            />
+          </label>
+          <label>
+            {t('status')}
+            <select
+              value={adminForm.status}
+              onChange={(event) =>
+                setAdminForm((current) => ({ ...current, status: event.target.value as AdminUserStatus }))
+              }
+            >
+              <option value="active">{t('active')}</option>
+              <option value="disabled">{t('disabled')}</option>
+            </select>
+          </label>
           <button className="primary" disabled={busy}>
-            <Plus size={16} />
-            {t('create')}
+            {adminForm.id ? <Save size={16} /> : <Plus size={16} />}
+            {adminForm.id ? t('save') : t('create')}
           </button>
+          {adminForm.id ? (
+            <button className="ghost" type="button" onClick={onCancel}>
+              {t('cancel')}
+            </button>
+          ) : null}
         </form>
-        {newApiKeySecret ? <SecretBox value={newApiKeySecret} title={t('adminApiKeySecret')} t={t} /> : null}
       </section>
 
       <section className="panel">
-        <PanelTitle icon={<ShieldCheck size={18} />} title={t('adminApiKeyList')} />
+        <PanelTitle icon={<ShieldCheck size={18} />} title={t('adminUserList')} />
         <DataTable
-          empty={t('noApiKeys')}
-          columns={[t('name'), t('prefix'), t('lastUsed'), t('status'), '']}
-          rows={apiKeys.map((apiKey) => [
-            <strong className={apiKey.active ? '' : 'muted'}>{apiKey.name}</strong>,
-            <code>{apiKey.keyPrefix}</code>,
-            apiKey.lastUsedAt ? formatTime(apiKey.lastUsedAt, locale) : <span className="muted">{t('never')}</span>,
-            <StatusPill label={apiKey.active ? t('available') : t('disabled')} tone={apiKey.active ? 'good' : 'off'} />,
-            apiKey.active ? (
-              <button className="icon danger" title={t('stopApiKey')} onClick={() => onDelete(apiKey)}>
-                <Trash2 size={15} />
+          empty={t('noAdminUsers')}
+          columns={[t('username'), t('status'), t('lastLogin'), t('updatedAt'), '']}
+          rows={adminUsers.map((user) => [
+            <strong className={user.status === 'active' ? '' : 'muted'}>{user.username}</strong>,
+            <StatusPill label={user.status === 'active' ? t('active') : t('disabled')} tone={user.status === 'active' ? 'good' : 'off'} />,
+            user.lastLoginAt ? formatTime(user.lastLoginAt, locale) : <span className="muted">{t('never')}</span>,
+            formatTime(user.updatedAt, locale),
+            <div className="row-actions">
+              <button className="icon" title={t('editAdminUser')} onClick={() => onEdit(user)}>
+                <Pencil size={15} />
               </button>
-            ) : null
+              {user.status === 'active' ? (
+                <button className="icon danger" title={t('disableAdminUser')} onClick={() => onDisable(user)}>
+                  <Trash2 size={15} />
+                </button>
+              ) : null}
+            </div>
           ])}
         />
       </section>
@@ -1048,7 +1135,7 @@ function ActivityView({
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const items = useMemo(() => buildActivityItems(sessions, events, tokenById, t, locale), [events, locale, sessions, t, tokenById]);
   const visibleItems = filter === 'all' ? items : items.filter((item) => item.category === filter);
-  const filters: ActivityFilter[] = ['all', 'connections', 'webApps', 'tokens', 'apiKeys', 'system'];
+  const filters: ActivityFilter[] = ['all', 'connections', 'webApps', 'tokens', 'admins', 'system'];
 
   return (
     <section className="panel">
@@ -1313,8 +1400,8 @@ function eventCategory(type: string): ActivityFilter {
   if (type.startsWith('token')) {
     return 'tokens';
   }
-  if (type.startsWith('admin_api_key')) {
-    return 'apiKeys';
+  if (type.startsWith('admin_user') || type.startsWith('admin_api_key')) {
+    return 'admins';
   }
   if (type.startsWith('agent') || type.startsWith('desktop_device')) {
     return 'connections';
@@ -1328,7 +1415,7 @@ function activityFilterLabel(filter: ActivityFilter, t: Translator) {
     connections: 'activityConnections',
     webApps: 'activityWebApps',
     tokens: 'activityTokens',
-    apiKeys: 'activityApiKeys',
+    admins: 'activityAdmins',
     system: 'activitySystem'
   };
   return t(labels[filter]);
@@ -1353,7 +1440,7 @@ function viewTitle(view: View, t: Translator) {
     agents: 'navAgents',
     routes: 'navRoutes',
     tokens: 'navTokens',
-    apiKeys: 'adminApiKeys',
+    admins: 'adminUsers',
     activity: 'navActivity'
   };
   return t(titles[view]);
