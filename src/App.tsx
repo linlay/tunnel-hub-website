@@ -522,6 +522,16 @@ function Dashboard({
             {t('navActivity')}
           </NavButton>
         </nav>
+        <UserMenu
+          locale={locale}
+          setLocale={setLocale}
+          setThemeMode={setThemeMode}
+          t={t}
+          themeMode={themeMode}
+          username={username}
+          onAdmins={() => navigate('admins')}
+          onLogout={logout}
+        />
       </aside>
 
       <section className="workspace">
@@ -534,16 +544,6 @@ function Dashboard({
               <RefreshCcw size={16} />
               {t('refresh')}
             </button>
-            <UserMenu
-              locale={locale}
-              setLocale={setLocale}
-              setThemeMode={setThemeMode}
-              t={t}
-              themeMode={themeMode}
-              username={username}
-              onAdmins={() => navigate('admins')}
-              onLogout={logout}
-            />
           </div>
         </header>
 
@@ -819,7 +819,6 @@ function DesktopsView({
   return (
     <section className="stack">
       <section className="panel">
-        <PanelTitle icon={<Server size={18} />} title={t('navDesktops')} />
         <SearchField label={t('searchDesktops')} value={query} onChange={setQuery} />
         <DataTable
           empty={t('noDesktops')}

@@ -512,6 +512,10 @@ code {
   position: relative;
 }
 
+.sidebar .user-menu {
+  margin-top: auto;
+}
+
 .user-trigger span {
   max-width: 140px;
   overflow: hidden;
@@ -1104,6 +1108,7 @@ th:last-child {
 
   .grid-two {
     grid-template-columns: 1fr;
+    gap: 22px;
   }
 
   .toolbar {
