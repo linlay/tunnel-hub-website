@@ -5,9 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
-  Copy,
   Globe2,
-  KeyRound,
   Languages,
   LayoutDashboard,
   Link2,
@@ -19,39 +17,32 @@ import {
   RefreshCcw,
   Route as RouteIcon,
   Save,
+  Search,
   Server,
   ShieldCheck,
-  SquareTerminal,
   Sun,
   Trash2,
   UserRound,
-  Wifi
+  Wifi,
+  XCircle
 } from 'lucide-react';
 import {
+  ActivityObjectType,
+  ActivityRecord,
   AdminUser,
-  AgentRecord,
-  AgentSession,
   ApiError,
-  EventLog,
-  Metrics,
+  DesktopRecord,
+  OverviewResponse,
   Route,
   RouteInput,
-  TunnelToken,
+  TrafficRange,
+  WebAppRecord,
   api
 } from './lib/api';
-import {
-  ActivityFilter,
-  Locale,
-  ThemeMode,
-  TranslationKey,
-  Translator,
-  isLocale,
-  isThemeMode,
-  makeTranslator
-} from './lib/i18n';
+import { Locale, ThemeMode, TranslationKey, Translator, isLocale, isThemeMode, makeTranslator } from './lib/i18n';
 
 type LoadState = 'loading' | 'ready' | 'anonymous';
-type View = 'overview' | 'agents' | 'routes' | 'tokens' | 'admins' | 'activity';
+type View = 'overview' | 'desktops' | 'webapps' | 'admins' | 'activity';
 type RouteMode = 'service' | 'host';
 type EffectiveTheme = 'light' | 'dark';
 type AdminUserStatus = 'active' | 'disabled';
@@ -64,18 +55,6 @@ type RouteForm = {
   targetUrl: string;
   tokenId: string;
   active: boolean;
-};
-
-type ActivityItem = {
-  id: string;
-  category: ActivityFilter;
-  sortTime: number;
-  type: string;
-  title: string;
-  details: string;
-  meta: string;
-  status?: string;
-  statusTone?: 'good' | 'warn' | 'off';
 };
 
 type AdminUserForm = {
@@ -101,6 +80,22 @@ const emptyAdminUserForm = (): AdminUserForm => ({
   username: '',
   password: '',
   status: 'active'
+});
+
+const emptyOverview = (range: TrafficRange): OverviewResponse => ({
+  range,
+  desktopConnectionCount: 0,
+  webAppCount: 0,
+  totalTrafficBytes: 0,
+  resources: {
+    totalDesktops: 0,
+    onlineDesktops: 0,
+    totalWebApps: 0,
+    activeWebApps: 0,
+    activeStreams: 0,
+    totalStreams: 0
+  },
+  traffic: []
 });
 
 export function App() {
@@ -249,52 +244,65 @@ function Dashboard({
   username: string;
   onLogout: () => void;
 }) {
-  const [view, setView] = useState<View>('overview');
-  const [routes, setRoutes] = useState<Route[]>([]);
-  const [tokens, setTokens] = useState<TunnelToken[]>([]);
-  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [view, setViewState] = useState<View>(() => viewFromPath(currentPath()));
+  const [overviewRange, setOverviewRange] = useState<TrafficRange>('hour');
+  const [overview, setOverview] = useState<OverviewResponse>(() => emptyOverview('hour'));
+  const [desktops, setDesktops] = useState<DesktopRecord[]>([]);
+  const [webapps, setWebapps] = useState<WebAppRecord[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [sessions, setSessions] = useState<AgentSession[]>([]);
-  const [events, setEvents] = useState<EventLog[]>([]);
-  const [metrics, setMetrics] = useState<Metrics>({
-    hasActiveAgent: false,
-    activeAgentCount: 0,
-    activeAgents: [],
-    totalStreams: 0,
-    activeStreams: 0
-  });
+  const [activityFilter, setActivityFilter] = useState<ActivityObjectType>('all');
+  const [activityQuery, setActivityQuery] = useState('');
+  const [activityItems, setActivityItems] = useState<ActivityRecord[]>([]);
   const [routeForm, setRouteForm] = useState<RouteForm>(emptyRoute());
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm());
-  const [tokenName, setTokenName] = useState('mac-mini-office');
-  const [newSecret, setNewSecret] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const navigate = useCallback((next: View) => {
+    setViewState(next);
+    const path = viewPath(next);
+    if (currentPath() !== path) {
+      window.history.pushState({ view: next }, '', path);
+    }
+  }, []);
+
+  useEffect(() => {
+    const path = viewPath(viewFromPath(currentPath()));
+    if (currentPath() !== path) {
+      window.history.replaceState({ view: viewFromPath(path) }, '', path);
+    }
+    const onPopState = () => {
+      const next = viewFromPath(currentPath());
+      setViewState(next);
+      const normalized = viewPath(next);
+      if (currentPath() !== normalized) {
+        window.history.replaceState({ view: next }, '', normalized);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   const refresh = useCallback(async () => {
     setError('');
     try {
-      const [nextRoutes, nextTokens, nextAgents, nextAdminUsers, nextSessions, nextEvents, nextMetrics] =
-        await Promise.all([
-          api.routes(),
-          api.tokens(),
-          api.agents(),
-          api.adminUsers(),
-          api.sessions(),
-          api.events(),
-          api.metrics()
-        ]);
-      setRoutes(nextRoutes ?? []);
-      setTokens(nextTokens ?? []);
-      setAgents(nextAgents ?? []);
+      const [nextOverview, nextDesktops, nextWebapps, nextAdminUsers, nextActivity] = await Promise.all([
+        api.overview(overviewRange),
+        api.desktops(),
+        api.webapps(),
+        api.adminUsers(),
+        api.activity(activityFilter, activityQuery)
+      ]);
+      setOverview(nextOverview ?? emptyOverview(overviewRange));
+      setDesktops(nextDesktops ?? []);
+      setWebapps(nextWebapps ?? []);
       setAdminUsers(nextAdminUsers ?? []);
-      setSessions(nextSessions ?? []);
-      setEvents(nextEvents ?? []);
-      setMetrics(nextMetrics);
+      setActivityItems(nextActivity ?? []);
     } catch (err) {
       setError(errorMessage(err, t));
     }
-  }, [t]);
+  }, [activityFilter, activityQuery, overviewRange, t]);
 
   useEffect(() => {
     refresh();
@@ -302,23 +310,13 @@ function Dashboard({
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const activeTokens = useMemo(() => tokens.filter((token) => token.active), [tokens]);
-  const tokenById = useMemo(() => new Map(tokens.map((token) => [token.id, token])), [tokens]);
-  const onlineTokenIds = useMemo(
-    () => new Set(agents.filter((agent) => agent.online).map((agent) => agent.token.id)),
-    [agents]
-  );
+  const activeDesktops = useMemo(() => desktops.filter((desktop) => desktop.tokenActive), [desktops]);
 
   useEffect(() => {
-    if (!routeForm.tokenId && activeTokens.length > 0) {
-      setRouteForm((current) => ({ ...current, tokenId: activeTokens[0].id }));
+    if (!routeForm.tokenId && activeDesktops.length > 0) {
+      setRouteForm((current) => ({ ...current, tokenId: activeDesktops[0].tokenId }));
     }
-  }, [activeTokens, routeForm.tokenId]);
-
-  const assignedRoutes = routes.filter((route) => route.tokenId);
-  const activeRoutes = assignedRoutes.filter((route) => route.active).length;
-  const unassignedRoutes = routes.length - assignedRoutes.length;
-  const agentCommand = newSecret ? buildAgentCommand(newSecret) : '';
+  }, [activeDesktops, routeForm.tokenId]);
 
   async function saveRoute(event: FormEvent) {
     event.preventDefault();
@@ -355,8 +353,8 @@ function Dashboard({
         await api.createRoute(input);
         setNotice(t('webAppAdded'));
       }
-      setRouteForm(emptyRoute(activeTokens[0]?.id ?? routeForm.tokenId));
-      setView('routes');
+      setRouteForm(emptyRoute(activeDesktops[0]?.tokenId ?? routeForm.tokenId));
+      navigate('webapps');
       await refresh();
     } catch (err) {
       setError(errorMessage(err, t));
@@ -381,7 +379,7 @@ function Dashboard({
   }
 
   function editRoute(route: Route) {
-    setView('routes');
+    navigate('webapps');
     setRouteForm({
       id: route.id,
       mode: 'host',
@@ -393,15 +391,17 @@ function Dashboard({
     });
   }
 
-  async function createToken(event: FormEvent) {
-    event.preventDefault();
+  async function closeDesktopConnection(desktop: DesktopRecord) {
+    if (!desktop.sessionId) {
+      setError(t('noActiveSession'));
+      return;
+    }
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const created = await api.createToken(tokenName.trim());
-      setNewSecret(created.secret);
-      setNotice(t('tokenCreated'));
+      await api.closeSession(desktop.sessionId);
+      setNotice(t('connectionClosed'));
       await refresh();
     } catch (err) {
       setError(errorMessage(err, t));
@@ -410,13 +410,13 @@ function Dashboard({
     }
   }
 
-  async function removeToken(token: TunnelToken) {
+  async function deactivateDesktop(desktop: DesktopRecord) {
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      await api.deleteToken(token.id);
-      setNotice(t('tokenDeactivated'));
+      await api.deleteToken(desktop.tokenId);
+      setNotice(t('deviceDeactivated'));
       await refresh();
     } catch (err) {
       setError(errorMessage(err, t));
@@ -464,7 +464,7 @@ function Dashboard({
   }
 
   function editAdminUser(user: AdminUser) {
-    setView('admins');
+    navigate('admins');
     setAdminUserForm({
       id: user.id,
       username: user.username,
@@ -509,19 +509,16 @@ function Dashboard({
           </div>
         </div>
         <nav aria-label="Main">
-          <NavButton active={view === 'overview'} icon={<LayoutDashboard size={16} />} onClick={() => setView('overview')}>
+          <NavButton active={view === 'overview'} icon={<LayoutDashboard size={16} />} onClick={() => navigate('overview')}>
             {t('navOverview')}
           </NavButton>
-          <NavButton active={view === 'agents'} icon={<Server size={16} />} onClick={() => setView('agents')}>
-            {t('navAgents')}
+          <NavButton active={view === 'desktops'} icon={<Server size={16} />} onClick={() => navigate('desktops')}>
+            {t('navDesktops')}
           </NavButton>
-          <NavButton active={view === 'routes'} icon={<Globe2 size={16} />} onClick={() => setView('routes')}>
-            {t('navRoutes')}
+          <NavButton active={view === 'webapps'} icon={<Globe2 size={16} />} onClick={() => navigate('webapps')}>
+            {t('navWebApps')}
           </NavButton>
-          <NavButton active={view === 'tokens'} icon={<KeyRound size={16} />} onClick={() => setView('tokens')}>
-            {t('navTokens')}
-          </NavButton>
-          <NavButton active={view === 'activity'} icon={<Activity size={16} />} onClick={() => setView('activity')}>
+          <NavButton active={view === 'activity'} icon={<Activity size={16} />} onClick={() => navigate('activity')}>
             {t('navActivity')}
           </NavButton>
         </nav>
@@ -544,7 +541,7 @@ function Dashboard({
               t={t}
               themeMode={themeMode}
               username={username}
-              onAdmins={() => setView('admins')}
+              onAdmins={() => navigate('admins')}
               onLogout={logout}
             />
           </div>
@@ -555,50 +552,40 @@ function Dashboard({
 
         {view === 'overview' ? (
           <OverviewView
-            agents={agents}
-            activeRoutes={activeRoutes}
-            events={events}
             locale={locale}
-            metrics={metrics}
-            onlineTokenIds={onlineTokenIds}
-            routes={routes}
+            overview={overview}
+            range={overviewRange}
+            setRange={setOverviewRange}
             t={t}
-            tokenById={tokenById}
-            unassignedRoutes={unassignedRoutes}
+            recentActivity={activityItems}
+            webapps={webapps}
             onEditRoute={editRoute}
           />
         ) : null}
 
-        {view === 'agents' ? <AgentsView agents={agents} locale={locale} t={t} /> : null}
-
-        {view === 'routes' ? (
-          <RoutesView
-            activeTokens={activeTokens}
+        {view === 'desktops' ? (
+          <DesktopsView
             busy={busy}
-            onlineTokenIds={onlineTokenIds}
-            routeForm={routeForm}
-            routes={routes}
-            setRouteForm={setRouteForm}
+            desktops={desktops}
+            locale={locale}
             t={t}
-            tokenById={tokenById}
-            onDelete={removeRoute}
-            onEdit={editRoute}
-            onSave={saveRoute}
+            onClose={closeDesktopConnection}
+            onDeactivate={deactivateDesktop}
           />
         ) : null}
 
-        {view === 'tokens' ? (
-          <TokensView
-            agentCommand={agentCommand}
+        {view === 'webapps' ? (
+          <WebAppsView
             busy={busy}
-            locale={locale}
-            newSecret={newSecret}
-            setTokenName={setTokenName}
+            desktopOptions={activeDesktops}
+            routeForm={routeForm}
+            setRouteForm={setRouteForm}
             t={t}
-            tokenName={tokenName}
-            tokens={tokens}
-            onCreate={createToken}
-            onDelete={removeToken}
+            webapps={webapps}
+            locale={locale}
+            onDelete={removeRoute}
+            onEdit={editRoute}
+            onSave={saveRoute}
           />
         ) : null}
 
@@ -619,11 +606,13 @@ function Dashboard({
 
         {view === 'activity' ? (
           <ActivityView
-            events={events}
+            filter={activityFilter}
+            items={activityItems}
             locale={locale}
-            sessions={sessions}
+            query={activityQuery}
+            setFilter={setActivityFilter}
+            setQuery={setActivityQuery}
             t={t}
-            tokenById={tokenById}
           />
         ) : null}
       </section>
@@ -719,146 +708,199 @@ function UserMenu({
 }
 
 function OverviewView({
-  agents,
-  activeRoutes,
-  events,
   locale,
-  metrics,
-  onlineTokenIds,
-  routes,
+  overview,
+  range,
+  recentActivity,
+  setRange,
   t,
-  tokenById,
-  unassignedRoutes,
+  webapps,
   onEditRoute
 }: {
-  agents: AgentRecord[];
-  activeRoutes: number;
-  events: EventLog[];
   locale: Locale;
-  metrics: Metrics;
-  onlineTokenIds: Set<string>;
-  routes: Route[];
+  overview: OverviewResponse;
+  range: TrafficRange;
+  recentActivity: ActivityRecord[];
+  setRange: (range: TrafficRange) => void;
   t: Translator;
-  tokenById: Map<string, TunnelToken>;
-  unassignedRoutes: number;
+  webapps: WebAppRecord[];
   onEditRoute: (route: Route) => void;
 }) {
+  const recentConnection = overview.recentConnectionAt ? formatTime(overview.recentConnectionAt, locale) : t('never');
+  const recentIdentity = overview.recentIdentity || overview.recentDevice || t('none');
+
   return (
     <>
-      <section className="status-grid" aria-label="Tunnel status">
+      <section className="status-grid" aria-label={t('resourceOverview')}>
         <MetricTile
-          icon={metrics.activeAgentCount > 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-          label={t('onlineDesktopAgents')}
-          value={metrics.activeAgentCount}
-          tone={metrics.activeAgentCount > 0 ? 'good' : 'warn'}
+          icon={overview.desktopConnectionCount > 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+          label={t('desktopConnections')}
+          value={overview.desktopConnectionCount}
+          tone={overview.desktopConnectionCount > 0 ? 'good' : 'warn'}
         />
-        <MetricTile icon={<Globe2 size={18} />} label={t('deployedWebApps')} value={routes.filter((route) => route.tokenId).length} />
-        <MetricTile icon={<RouteIcon size={18} />} label={t('activeRoutes')} value={activeRoutes} />
-        <MetricTile icon={<Activity size={18} />} label={t('activeStreams')} value={metrics.activeStreams} />
-        <MetricTile icon={<Server size={18} />} label={t('totalStreams')} value={metrics.totalStreams} />
-        <MetricTile
-          icon={unassignedRoutes > 0 ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
-          label={t('unassigned')}
-          value={unassignedRoutes}
-          tone={unassignedRoutes > 0 ? 'warn' : 'good'}
-        />
+        <MetricTile icon={<Globe2 size={18} />} label={t('webAppConnections')} value={overview.webAppCount} />
+        <MetricTile icon={<Activity size={18} />} label={t('totalTraffic')} value={formatBytes(overview.totalTrafficBytes)} />
+        <MetricTile icon={<ClockIcon />} label={t('recentConnection')} value={recentConnection} />
+        <MetricTile icon={<UserRound size={18} />} label={t('recentIdentity')} value={recentIdentity} />
+        <MetricTile icon={<RouteIcon size={18} />} label={t('activeStreams')} value={overview.resources.activeStreams} />
       </section>
 
       <section className="grid-two">
         <section className="panel">
-          <PanelTitle icon={<Server size={18} />} title={t('navAgents')} />
-          <div className="agent-list compact">
-            {agents.length === 0 ? <span className="empty">{t('noDesktopAgentTokens')}</span> : null}
-            {agents.slice(0, 4).map((agent) => (
-              <AgentSummary key={agent.token.id} agent={agent} t={t} />
-            ))}
+          <div className="panel-title spread">
+            <div className="panel-title-main">
+              <Activity size={18} />
+              <h2>{t('traffic')}</h2>
+            </div>
+            <SegmentedRange value={range} onChange={setRange} t={t} />
           </div>
+          <TrafficChart points={overview.traffic} t={t} />
+        </section>
+
+        <section className="panel">
+          <PanelTitle icon={<Server size={18} />} title={t('resourceOverview')} />
+          <div className="summary-list">
+            <SummaryRow label={t('totalDesktops')} value={overview.resources.totalDesktops} />
+            <SummaryRow label={t('onlineDesktops')} value={overview.resources.onlineDesktops} />
+            <SummaryRow label={t('totalWebApps')} value={overview.resources.totalWebApps} />
+            <SummaryRow label={t('activeWebApps')} value={overview.resources.activeWebApps} />
+            <SummaryRow label={t('totalStreams')} value={overview.resources.totalStreams} />
+            <SummaryRow label={t('recentDevice')} value={overview.recentDevice || t('none')} />
+          </div>
+        </section>
+      </section>
+
+      <section className="grid-two">
+        <section className="panel">
+          <PanelTitle icon={<Globe2 size={18} />} title={t('webAppOverview')} />
+          <WebAppsTable
+            locale={locale}
+            readonlyDelete
+            t={t}
+            webapps={webapps.slice(0, 6)}
+            onDelete={() => undefined}
+            onEdit={onEditRoute}
+          />
         </section>
 
         <section className="panel">
           <PanelTitle icon={<Activity size={18} />} title={t('recentActivity')} />
-          <EventList events={events.slice(0, 6)} locale={locale} t={t} />
+          <ActivityList items={recentActivity.slice(0, 6)} locale={locale} t={t} />
         </section>
-      </section>
-
-      <section className="panel">
-        <PanelTitle icon={<Globe2 size={18} />} title={t('webAppOverview')} />
-        <RoutesTable
-          onlineTokenIds={onlineTokenIds}
-          readonlyDelete
-          routes={routes.slice(0, 8)}
-          t={t}
-          tokenById={tokenById}
-          onDelete={() => undefined}
-          onEdit={onEditRoute}
-        />
       </section>
     </>
   );
 }
 
-function AgentsView({ agents, locale, t }: { agents: AgentRecord[]; locale: Locale; t: Translator }) {
+function DesktopsView({
+  busy,
+  desktops,
+  locale,
+  t,
+  onClose,
+  onDeactivate
+}: {
+  busy: boolean;
+  desktops: DesktopRecord[];
+  locale: Locale;
+  t: Translator;
+  onClose: (desktop: DesktopRecord) => void;
+  onDeactivate: (desktop: DesktopRecord) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return desktops;
+    }
+    return desktops.filter((desktop) => desktopSearchText(desktop).includes(needle));
+  }, [desktops, query]);
+
   return (
-    <section className="agent-grid">
-      {agents.length === 0 ? <div className="empty panel">{t('noDesktopAgentTokens')}</div> : null}
-      {agents.map((agent) => (
-        <article className="agent-card" key={agent.token.id}>
-          <div className="agent-head">
-            <div>
-              <span className="eyebrow">{t('navAgents')}</span>
-              <h2>{agent.token.name}</h2>
+    <section className="stack">
+      <section className="panel">
+        <PanelTitle icon={<Server size={18} />} title={t('navDesktops')} />
+        <SearchField label={t('searchDesktops')} value={query} onChange={setQuery} />
+        <DataTable
+          empty={t('noDesktops')}
+          columns={[t('publicUrl'), t('status'), t('connectionIdentity'), t('traffic'), t('webApp'), '']}
+          rows={visible.map((desktop) => [
+            <HostCell host={desktop.publicHost} url={desktop.publicUrl} t={t} />,
+            <StatusPill
+              label={desktop.online ? t('online') : desktop.tokenActive ? t('offline') : t('disabled')}
+              tone={desktop.online ? 'good' : desktop.tokenActive ? 'warn' : 'off'}
+            />,
+            <div className="table-meta">
+              <strong>{desktopDisplayName(desktop)}</strong>
+              <small>{desktop.remoteAddr || desktop.ownerEmail || desktop.deviceId}</small>
+              <small>{desktop.sessionId ? `${t('currentSession')}: ${shortID(desktop.sessionId)}` : t('noSession')}</small>
+              <small>
+                {t('lastConnected')}: {desktop.lastConnectedAt ? formatTime(desktop.lastConnectedAt, locale) : t('never')}
+              </small>
+            </div>,
+            <TrafficMeta stats={desktop.traffic} t={t} />,
+            formatTemplate(t('webAppsCount'), { count: desktop.webAppCount }),
+            <div className="row-actions">
+              <button
+                aria-label={t('closeConnection')}
+                className="icon"
+                disabled={busy || !desktop.sessionId}
+                title={t('closeConnection')}
+                onClick={() => onClose(desktop)}
+              >
+                <XCircle size={15} />
+              </button>
+              {desktop.tokenActive ? (
+                <button
+                  aria-label={t('deactivateDevice')}
+                  className="icon danger"
+                  disabled={busy}
+                  title={t('deactivateDevice')}
+                  onClick={() => onDeactivate(desktop)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              ) : null}
             </div>
-            <StatusPill label={agent.online ? t('online') : agent.token.active ? t('offline') : t('disabled')} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
-          </div>
-          <div className="agent-meta">
-            <span>{t('tokenPrefix')}</span>
-            <code>{agent.token.tokenPrefix}</code>
-            <span>{t('remoteAddress')}</span>
-            <strong>{agent.remoteAddr ?? t('offline')}</strong>
-            <span>{t('duration')}</span>
-            <strong>{agent.connectedAt ? formatDuration(agent.connectedAt, undefined, locale) : t('offline')}</strong>
-            <span>{t('currentSession')}</span>
-            <code>{agent.sessionId ? shortID(agent.sessionId) : t('noSession')}</code>
-          </div>
-          <div className="route-chips">
-            {agent.routes.length === 0 ? <span className="muted">{t('noWebApps')}</span> : null}
-            {agent.routes.map((route) => (
-              <span className="chip" key={route.id}>
-                {route.publicHost}
-              </span>
-            ))}
-          </div>
-        </article>
-      ))}
+          ])}
+        />
+      </section>
     </section>
   );
 }
 
-function RoutesView({
-  activeTokens,
+function WebAppsView({
   busy,
-  onlineTokenIds,
+  desktopOptions,
+  locale,
   routeForm,
-  routes,
   setRouteForm,
   t,
-  tokenById,
+  webapps,
   onDelete,
   onEdit,
   onSave
 }: {
-  activeTokens: TunnelToken[];
   busy: boolean;
-  onlineTokenIds: Set<string>;
+  desktopOptions: DesktopRecord[];
+  locale: Locale;
   routeForm: RouteForm;
-  routes: Route[];
   setRouteForm: (updater: RouteForm | ((current: RouteForm) => RouteForm)) => void;
   t: Translator;
-  tokenById: Map<string, TunnelToken>;
+  webapps: WebAppRecord[];
   onDelete: (route: Route) => void;
   onEdit: (route: Route) => void;
   onSave: (event: FormEvent) => void;
 }) {
+  const [query, setQuery] = useState('');
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return webapps;
+    }
+    return webapps.filter((webapp) => webappSearchText(webapp).includes(needle));
+  }, [query, webapps]);
+
   return (
     <section className="stack">
       <section className="panel">
@@ -914,15 +956,15 @@ function RoutesView({
             />
           </label>
           <label>
-            {t('navAgents')}
+            {t('navDesktops')}
             <select
               value={routeForm.tokenId}
               onChange={(event) => setRouteForm((current) => ({ ...current, tokenId: event.target.value }))}
             >
               <option value="">{t('selectDesktopAgent')}</option>
-              {activeTokens.map((token) => (
-                <option value={token.id} key={token.id}>
-                  {token.name}
+              {desktopOptions.map((desktop) => (
+                <option value={desktop.tokenId} key={desktop.tokenId}>
+                  {desktopDisplayName(desktop)}
                 </option>
               ))}
             </select>
@@ -935,7 +977,7 @@ function RoutesView({
             />
             {t('enabled')}
           </label>
-          <button className="primary" disabled={busy || activeTokens.length === 0}>
+          <button className="primary" disabled={busy || desktopOptions.length === 0}>
             {routeForm.id ? <Save size={16} /> : <Plus size={16} />}
             {routeForm.id ? t('save') : t('deployWebApp')}
           </button>
@@ -944,80 +986,8 @@ function RoutesView({
 
       <section className="panel">
         <PanelTitle icon={<Globe2 size={18} />} title={t('webAppList')} />
-        <RoutesTable routes={routes} t={t} tokenById={tokenById} onlineTokenIds={onlineTokenIds} onEdit={onEdit} onDelete={onDelete} />
-      </section>
-    </section>
-  );
-}
-
-function TokensView({
-  agentCommand,
-  busy,
-  locale,
-  newSecret,
-  setTokenName,
-  t,
-  tokenName,
-  tokens,
-  onCreate,
-  onDelete
-}: {
-  agentCommand: string;
-  busy: boolean;
-  locale: Locale;
-  newSecret: string;
-  setTokenName: (value: string) => void;
-  t: Translator;
-  tokenName: string;
-  tokens: TunnelToken[];
-  onCreate: (event: FormEvent) => void;
-  onDelete: (token: TunnelToken) => void;
-}) {
-  return (
-    <section className="grid-two">
-      <section className="panel">
-        <PanelTitle icon={<KeyRound size={18} />} title={t('createDesktopAgentToken')} />
-        <form className="inline-form" onSubmit={onCreate}>
-          <input value={tokenName} onChange={(event) => setTokenName(event.target.value)} placeholder="mac-mini-office" />
-          <button className="primary" disabled={busy}>
-            <Plus size={16} />
-            {t('create')}
-          </button>
-        </form>
-        {newSecret ? (
-          <div className="secret-stack">
-            <SecretBox value={newSecret} title={t('tokenSecret')} t={t} />
-            <div className="command-box">
-              <div>
-                <SquareTerminal size={16} />
-                <span>{t('command')}</span>
-              </div>
-              <code>{agentCommand}</code>
-              <button className="icon" title={t('copyCommand')} onClick={() => copyText(agentCommand)}>
-                <Copy size={15} />
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <PanelTitle icon={<KeyRound size={18} />} title={t('tokenList')} />
-        <DataTable
-          empty={t('noTokens')}
-          columns={[t('name'), t('prefix'), t('lastUsed'), t('status'), '']}
-          rows={tokens.map((token) => [
-            <strong className={token.active ? '' : 'muted'}>{token.name}</strong>,
-            <code>{token.tokenPrefix}</code>,
-            token.lastUsedAt ? formatTime(token.lastUsedAt, locale) : <span className="muted">{t('never')}</span>,
-            <StatusPill label={token.active ? t('available') : t('disabled')} tone={token.active ? 'good' : 'off'} />,
-            token.active ? (
-              <button className="icon danger" title={t('stopToken')} onClick={() => onDelete(token)}>
-                <Trash2 size={15} />
-              </button>
-            ) : null
-          ])}
-        />
+        <SearchField label={t('searchWebApps')} value={query} onChange={setQuery} />
+        <WebAppsTable locale={locale} t={t} webapps={visible} onDelete={onDelete} onEdit={onEdit} />
       </section>
     </section>
   );
@@ -1120,45 +1090,49 @@ function AdminUsersView({
 }
 
 function ActivityView({
-  events,
+  filter,
+  items,
   locale,
-  sessions,
-  t,
-  tokenById
+  query,
+  setFilter,
+  setQuery,
+  t
 }: {
-  events: EventLog[];
+  filter: ActivityObjectType;
+  items: ActivityRecord[];
   locale: Locale;
-  sessions: AgentSession[];
+  query: string;
+  setFilter: (filter: ActivityObjectType) => void;
+  setQuery: (query: string) => void;
   t: Translator;
-  tokenById: Map<string, TunnelToken>;
 }) {
-  const [filter, setFilter] = useState<ActivityFilter>('all');
-  const items = useMemo(() => buildActivityItems(sessions, events, tokenById, t, locale), [events, locale, sessions, t, tokenById]);
-  const visibleItems = filter === 'all' ? items : items.filter((item) => item.category === filter);
-  const filters: ActivityFilter[] = ['all', 'connections', 'webApps', 'tokens', 'admins', 'system'];
+  const filters: ActivityObjectType[] = ['all', 'desktop', 'webapp', 'admin', 'system'];
 
   return (
     <section className="panel">
       <PanelTitle icon={<Activity size={18} />} title={t('activityLog')} />
-      <div className="filter-tabs" role="tablist" aria-label={t('activityLog')}>
-        {filters.map((item) => (
-          <button
-            key={item}
-            className={filter === item ? 'active' : ''}
-            role="tab"
-            aria-selected={filter === item}
-            onClick={() => setFilter(item)}
-          >
-            {activityFilterLabel(item, t)}
-          </button>
-        ))}
+      <div className="toolbar">
+        <div className="filter-tabs" role="tablist" aria-label={t('activityLog')}>
+          {filters.map((item) => (
+            <button
+              key={item}
+              className={filter === item ? 'active' : ''}
+              role="tab"
+              aria-selected={filter === item}
+              onClick={() => setFilter(item)}
+            >
+              {activityFilterLabel(item, t)}
+            </button>
+          ))}
+        </div>
+        <SearchField label={t('searchActivity')} value={query} onChange={setQuery} />
       </div>
-      <ActivityList items={visibleItems} locale={locale} t={t} />
+      <ActivityList items={items} locale={locale} t={t} />
     </section>
   );
 }
 
-function ActivityList({ items, locale, t }: { items: ActivityItem[]; locale: Locale; t: Translator }) {
+function ActivityList({ items, locale, t }: { items: ActivityRecord[]; locale: Locale; t: Translator }) {
   if (items.length === 0) {
     return <div className="empty">{t('noActivity')}</div>;
   }
@@ -1166,58 +1140,60 @@ function ActivityList({ items, locale, t }: { items: ActivityItem[]; locale: Loc
     <div className="activity-list">
       {items.map((item) => (
         <div className="activity-row" key={item.id}>
-          <span className="activity-category">{activityFilterLabel(item.category, t)}</span>
+          <span className="activity-category">{activityFilterLabel(item.objectType, t)}</span>
           <div className="activity-main">
-            <strong>{item.title}</strong>
-            <small>{item.details}</small>
-            <small>{item.meta}</small>
+            <strong>{item.message}</strong>
+            <small>{item.details || item.publicHost || t('details')}</small>
+            <small>{activityMeta(item, t)}</small>
           </div>
           <code>{item.type}</code>
-          {item.status && item.statusTone ? <StatusPill label={item.status} tone={item.statusTone} /> : <span />}
-          <time>{formatTime(new Date(item.sortTime).toISOString(), locale)}</time>
+          {activityStatus(item, t)}
+          <time>{formatTime(item.createdAt, locale)}</time>
         </div>
       ))}
     </div>
   );
 }
 
-function RoutesTable({
-  onlineTokenIds,
+function WebAppsTable({
+  locale,
   readonlyDelete,
-  routes,
   t,
-  tokenById,
+  webapps,
   onDelete,
   onEdit
 }: {
-  onlineTokenIds: Set<string>;
+  locale: Locale;
   readonlyDelete?: boolean;
-  routes: Route[];
   t: Translator;
-  tokenById: Map<string, TunnelToken>;
+  webapps: WebAppRecord[];
   onDelete: (route: Route) => void;
   onEdit: (route: Route) => void;
 }) {
   return (
     <DataTable
       empty={t('noWebApps')}
-      columns={[t('webApp'), t('localTarget'), t('navAgents'), t('status'), '']}
-      rows={routes.map((route) => [
-        <div className="host-cell">
-          <strong>{route.publicHost}</strong>
-          <button className="inline-icon" title={t('copyPublicUrl')} onClick={() => copyText(publicURL(route.publicHost))}>
-            <Link2 size={14} />
-          </button>
+      columns={[t('webApp'), t('route'), t('localTarget'), t('status'), t('traffic'), '']}
+      rows={webapps.map((webapp) => [
+        <div className="table-meta">
+          <HostCell host={webapp.publicHost} url={webapp.publicUrl} t={t} />
+          <small>{webapp.name || webapp.routeId}</small>
         </div>,
-        <code>{route.targetUrl}</code>,
-        route.tokenId ? tokenById.get(route.tokenId)?.name ?? shortID(route.tokenId) : <span className="muted">{t('unassigned')}</span>,
-        routeStatus(route, onlineTokenIds, t),
+        <code>{shortID(webapp.routeId)}</code>,
+        <code>{webapp.targetUrl}</code>,
+        webAppStatus(webapp, t),
+        <div className="table-meta">
+          <TrafficMeta stats={webapp.traffic} t={t} />
+          <small>
+            {t('lastAccess')}: {webapp.lastAccessAt ? formatTime(webapp.lastAccessAt, locale) : t('never')}
+          </small>
+        </div>,
         <div className="row-actions">
-          <button className="icon" title={t('editWebApp')} onClick={() => onEdit(route)}>
+          <button className="icon" title={t('editWebApp')} onClick={() => onEdit(webapp.route)}>
             <Pencil size={15} />
           </button>
           {readonlyDelete ? null : (
-            <button className="icon danger" title={t('webAppDeleted')} onClick={() => onDelete(route)}>
+            <button className="icon danger" title={t('webAppDeleted')} onClick={() => onDelete(webapp.route)}>
               <Trash2 size={15} />
             </button>
           )}
@@ -1227,30 +1203,90 @@ function RoutesTable({
   );
 }
 
-function EventList({ events, locale, t }: { events: EventLog[]; locale: Locale; t: Translator }) {
+function HostCell({ host, url, t }: { host: string; url: string; t: Translator }) {
   return (
-    <div className="event-list">
-      {events.length === 0 ? <span className="empty">{t('noActivity')}</span> : null}
-      {events.map((event) => (
-        <div className="event-row" key={event.id}>
-          <span>{event.type}</span>
-          <strong>{event.message}</strong>
-          <small>{event.details}</small>
-          <time>{formatTime(event.createdAt, locale)}</time>
+    <div className="host-cell">
+      <strong>{host}</strong>
+      <button className="inline-icon" title={t('copyPublicUrl')} onClick={() => copyText(url || publicURL(host))}>
+        <Link2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function TrafficMeta({ stats, t }: { stats: { requestCount: number; bytesIn: number; bytesOut: number }; t: Translator }) {
+  return (
+    <div className="traffic-meta">
+      <strong>{formatBytes(stats.bytesIn + stats.bytesOut)}</strong>
+      <small>{formatTemplate(t('trafficInOut'), { in: formatBytes(stats.bytesIn), out: formatBytes(stats.bytesOut) })}</small>
+      <small>{formatTemplate(t('requestCount'), { count: stats.requestCount })}</small>
+    </div>
+  );
+}
+
+function SearchField({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="search-field">
+      <Search size={15} />
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={label} aria-label={label} />
+    </label>
+  );
+}
+
+function SegmentedRange({ value, onChange, t }: { value: TrafficRange; onChange: (range: TrafficRange) => void; t: Translator }) {
+  const ranges: TrafficRange[] = ['hour', 'day', 'month'];
+  return (
+    <div className="segmented range-segmented" role="group" aria-label={t('trafficRange')}>
+      {ranges.map((range) => (
+        <button key={range} className={value === range ? 'active' : ''} onClick={() => onChange(range)}>
+          {t(range)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TrafficChart({ points, t }: { points: OverviewResponse['traffic']; t: Translator }) {
+  if (points.length === 0) {
+    return <div className="empty">{t('noTraffic')}</div>;
+  }
+  const max = Math.max(...points.map((point) => point.totalBytes), 1);
+  return (
+    <div className="traffic-chart" aria-label={t('traffic')}>
+      {points.map((point) => (
+        <div className="traffic-bar" key={point.bucket}>
+          <div className="traffic-track">
+            <span
+              className="traffic-fill in"
+              style={{ height: `${Math.max(3, (point.bytesIn / max) * 100)}%` }}
+              title={formatTemplate(t('bytesInValue'), { value: formatBytes(point.bytesIn) })}
+            />
+            <span
+              className="traffic-fill out"
+              style={{ height: `${Math.max(3, (point.bytesOut / max) * 100)}%` }}
+              title={formatTemplate(t('bytesOutValue'), { value: formatBytes(point.bytesOut) })}
+            />
+          </div>
+          <small>{point.label}</small>
         </div>
       ))}
     </div>
   );
 }
 
-function SecretBox({ value, title, t }: { value: string; title: string; t: Translator }) {
+function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="secret-box">
-      <span>{title}</span>
-      <code>{value}</code>
-      <button className="icon" title={t('copy')} onClick={() => copyText(value)}>
-        <Copy size={15} />
-      </button>
+    <div className="summary-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -1285,8 +1321,10 @@ function MetricTile({
   value: string | number;
   tone?: 'good' | 'warn';
 }) {
+  const textValue = String(value);
+  const textClass = textValue.length > 12 ? ' text' : '';
   return (
-    <div className={`metric ${tone ?? ''}`}>
+    <div className={`metric ${tone ?? ''}${textClass}`}>
       <div>{icon}</div>
       <span>{label}</span>
       <strong>{value}</strong>
@@ -1343,107 +1381,134 @@ function StatusPill({ label, tone }: { label: string; tone: 'good' | 'warn' | 'o
   return <span className={`pill ${tone}`}>{label}</span>;
 }
 
-function AgentSummary({ agent, t }: { agent: AgentRecord; t: Translator }) {
-  return (
-    <div className="agent-summary">
-      <div>
-        <strong>{agent.token.name}</strong>
-        <span>{agent.online ? agent.remoteAddr : t('offline')}</span>
-      </div>
-      <div>
-        <StatusPill label={agent.online ? t('online') : agent.token.active ? t('offline') : t('disabled')} tone={agent.online ? 'good' : agent.token.active ? 'warn' : 'off'} />
-        <small>{formatTemplate(t('webAppsCount'), { count: agent.routeCount })}</small>
-      </div>
-    </div>
-  );
+function ClockIcon() {
+  return <Clock3 size={18} />;
 }
 
-function buildActivityItems(
-  sessions: AgentSession[],
-  events: EventLog[],
-  tokenById: Map<string, TunnelToken>,
-  t: Translator,
-  locale: Locale
-) {
-  const sessionItems: ActivityItem[] = sessions.map((session) => {
-    const disconnected = Boolean(session.disconnectedAt);
-    return {
-      id: `session-${session.id}`,
-      category: 'connections',
-      sortTime: new Date(session.connectedAt).getTime(),
-      type: t('session'),
-      title: tokenById.get(session.tokenId)?.name ?? shortID(session.tokenId),
-      details: `${t('remoteAddress')}: ${session.remoteAddr}`,
-      meta: `${t('duration')}: ${formatDuration(session.connectedAt, session.disconnectedAt, locale)}`,
-      status: disconnected ? t('disconnected') : t('online'),
-      statusTone: disconnected ? 'off' : 'good'
-    };
-  });
-
-  const eventItems: ActivityItem[] = events.map((event) => ({
-    id: `event-${event.id}`,
-    category: eventCategory(event.type),
-    sortTime: new Date(event.createdAt).getTime(),
-    type: event.type,
-    title: event.message,
-    details: event.details || t('details'),
-    meta: t('event')
-  }));
-
-  return [...sessionItems, ...eventItems].sort((a, b) => b.sortTime - a.sortTime);
-}
-
-function eventCategory(type: string): ActivityFilter {
-  if (type.startsWith('route') || type.startsWith('service')) {
-    return 'webApps';
-  }
-  if (type.startsWith('token')) {
-    return 'tokens';
-  }
-  if (type.startsWith('admin_user') || type.startsWith('admin_api_key')) {
-    return 'admins';
-  }
-  if (type.startsWith('agent') || type.startsWith('desktop_device')) {
-    return 'connections';
-  }
-  return 'system';
-}
-
-function activityFilterLabel(filter: ActivityFilter, t: Translator) {
-  const labels: Record<ActivityFilter, TranslationKey> = {
-    all: 'all',
-    connections: 'activityConnections',
-    webApps: 'activityWebApps',
-    tokens: 'activityTokens',
-    admins: 'activityAdmins',
-    system: 'activitySystem'
-  };
-  return t(labels[filter]);
-}
-
-function routeStatus(route: Route, onlineTokenIds: Set<string>, t: Translator) {
-  if (!route.tokenId) {
+function webAppStatus(webapp: WebAppRecord, t: Translator) {
+  if (!webapp.tokenId) {
     return <StatusPill label={t('routeNeedsAgent')} tone="warn" />;
   }
-  if (!route.active) {
+  if (!webapp.active) {
     return <StatusPill label={t('disabled')} tone="off" />;
   }
-  if (!onlineTokenIds.has(route.tokenId)) {
+  if (!webapp.online) {
     return <StatusPill label={t('webAppOffline')} tone="warn" />;
   }
   return <StatusPill label={t('running')} tone="good" />;
 }
 
+function activityStatus(item: ActivityRecord, t: Translator) {
+  if (item.error) {
+    return <StatusPill label={t('error')} tone="warn" />;
+  }
+  if (item.statusCode) {
+    const tone = item.statusCode >= 500 ? 'warn' : item.statusCode >= 400 ? 'off' : 'good';
+    return <StatusPill label={String(item.statusCode)} tone={tone} />;
+  }
+  return <span />;
+}
+
+function activityMeta(item: ActivityRecord, t: Translator) {
+  const parts = [
+    item.publicHost,
+    item.routeId ? `${t('route')}: ${shortID(item.routeId)}` : '',
+    item.sessionId ? `${t('session')}: ${shortID(item.sessionId)}` : '',
+    item.bytesIn || item.bytesOut
+      ? formatTemplate(t('trafficInOut'), { in: formatBytes(item.bytesIn ?? 0), out: formatBytes(item.bytesOut ?? 0) })
+      : '',
+    item.error ? `${t('error')}: ${item.error}` : ''
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' / ') : t('event');
+}
+
+function activityFilterLabel(filter: ActivityObjectType, t: Translator) {
+  const labels: Record<ActivityObjectType, TranslationKey> = {
+    all: 'all',
+    desktop: 'activityDesktop',
+    webapp: 'activityWebApps',
+    admin: 'activityAdmins',
+    system: 'activitySystem'
+  };
+  return t(labels[filter]);
+}
+
+function desktopDisplayName(desktop: DesktopRecord) {
+  return desktop.deviceName || desktop.tokenName || desktop.ownerName || desktop.ownerEmail || desktop.deviceId;
+}
+
+function desktopSearchText(desktop: DesktopRecord) {
+  return [
+    desktop.deviceName,
+    desktop.deviceId,
+    desktop.ownerName,
+    desktop.ownerEmail,
+    desktop.ownerUserId,
+    desktop.publicHost,
+    desktop.remoteAddr,
+    desktop.tokenName,
+    desktop.sessionId
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function webappSearchText(webapp: WebAppRecord) {
+  return [
+    webapp.name,
+    webapp.publicHost,
+    webapp.targetUrl,
+    webapp.routeId,
+    webapp.deviceName,
+    webapp.deviceId,
+    webapp.tokenId
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
 function viewTitle(view: View, t: Translator) {
   const titles: Record<View, TranslationKey> = {
     overview: 'navOverview',
-    agents: 'navAgents',
-    routes: 'navRoutes',
-    tokens: 'navTokens',
+    desktops: 'navDesktops',
+    webapps: 'navWebApps',
     admins: 'adminUsers',
     activity: 'navActivity'
   };
   return t(titles[view]);
+}
+
+function viewFromPath(path: string): View {
+  switch (path) {
+    case '/desktops':
+      return 'desktops';
+    case '/webapps':
+      return 'webapps';
+    case '/activity':
+      return 'activity';
+    case '/admins':
+      return 'admins';
+    case '/overview':
+    default:
+      return 'overview';
+  }
+}
+
+function viewPath(view: View) {
+  const paths: Record<View, string> = {
+    overview: '/overview',
+    desktops: '/desktops',
+    webapps: '/webapps',
+    activity: '/activity',
+    admins: '/admins'
+  };
+  return paths[view];
+}
+
+function currentPath() {
+  return typeof window === 'undefined' ? '/overview' : window.location.pathname || '/';
 }
 
 function formatTime(value: string, locale: Locale) {
@@ -1455,54 +1520,12 @@ function formatTime(value: string, locale: Locale) {
   }).format(new Date(value));
 }
 
-function formatDuration(start: string, end: string | undefined, locale: Locale) {
-  const startTime = new Date(start).getTime();
-  const endTime = end ? new Date(end).getTime() : Date.now();
-  const seconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (locale === 'zh-CN') {
-    if (days > 0) {
-      return `${days}天 ${hours}小时`;
-    }
-    if (hours > 0) {
-      return `${hours}小时 ${minutes}分钟`;
-    }
-    if (minutes > 0) {
-      return `${minutes}分钟`;
-    }
-    return `${seconds}秒`;
-  }
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m`;
-  }
-  return `${seconds}s`;
-}
-
 function shortID(value: string) {
   return value.length > 14 ? `${value.slice(0, 14)}...` : value;
 }
 
 function publicURL(host: string) {
   return `https://${host}`;
-}
-
-function buildAgentCommand(secret: string) {
-  return `AGENT_TOKEN=${secret} AGENT_RELAY_URL=${relayTunnelURL()} go run ./cmd/agent`;
-}
-
-function relayTunnelURL() {
-  const base = import.meta.env.VITE_API_BASE_URL || window.location.origin;
-  const url = new URL('/tunnel', base);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return url.toString();
 }
 
 function copyText(value: string) {
@@ -1514,6 +1537,20 @@ function errorMessage(err: unknown, t: Translator) {
     return err.message;
   }
   return t('requestFailed');
+}
+
+function formatBytes(value: number) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let next = Math.max(0, value);
+  let unit = 0;
+  while (next >= 1024 && unit < units.length - 1) {
+    next /= 1024;
+    unit += 1;
+  }
+  if (unit === 0) {
+    return `${Math.round(next)} ${units[unit]}`;
+  }
+  return `${next >= 10 ? next.toFixed(0) : next.toFixed(1)} ${units[unit]}`;
 }
 
 function formatTemplate(template: string, values: Record<string, string | number>) {

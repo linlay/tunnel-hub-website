@@ -60,6 +60,107 @@ export type AgentRecord = {
   routeCount: number;
 };
 
+export type TrafficRange = 'hour' | 'day' | 'month';
+
+export type TrafficStats = {
+  requestCount: number;
+  bytesIn: number;
+  bytesOut: number;
+  lastAt?: string;
+};
+
+export type TrafficPoint = {
+  bucket: string;
+  label: string;
+  bytesIn: number;
+  bytesOut: number;
+  totalBytes: number;
+};
+
+export type OverviewResponse = {
+  range: TrafficRange;
+  desktopConnectionCount: number;
+  webAppCount: number;
+  totalTrafficBytes: number;
+  recentConnectionAt?: string;
+  recentIdentity?: string;
+  recentDevice?: string;
+  resources: {
+    totalDesktops: number;
+    onlineDesktops: number;
+    totalWebApps: number;
+    activeWebApps: number;
+    activeStreams: number;
+    totalStreams: number;
+  };
+  traffic: TrafficPoint[];
+};
+
+export type DesktopRecord = {
+  deviceId: string;
+  deviceName?: string;
+  ownerUserId?: string;
+  ownerEmail?: string;
+  ownerName?: string;
+  publicHost: string;
+  publicUrl: string;
+  tokenId: string;
+  tokenName?: string;
+  tokenActive: boolean;
+  online: boolean;
+  sessionId?: string;
+  remoteAddr?: string;
+  connectedAt?: string;
+  lastConnectedAt?: string;
+  traffic: TrafficStats;
+  webAppCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WebAppRecord = {
+  id: string;
+  name: string;
+  routeId: string;
+  publicHost: string;
+  publicUrl: string;
+  targetUrl: string;
+  tokenId?: string;
+  deviceId?: string;
+  deviceName?: string;
+  active: boolean;
+  online: boolean;
+  route: Route;
+  requestCount: number;
+  lastAccessAt?: string;
+  traffic: TrafficStats;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ActivityObjectType = 'all' | 'desktop' | 'webapp' | 'admin' | 'system';
+
+export type ActivityRecord = {
+  id: string;
+  objectType: ActivityObjectType;
+  type: string;
+  message: string;
+  details?: string;
+  publicHost?: string;
+  routeId?: string;
+  tokenId?: string;
+  sessionId?: string;
+  statusCode?: number;
+  bytesIn?: number;
+  bytesOut?: number;
+  error?: string;
+  createdAt: string;
+};
+
+export type ActivityResponse = {
+  items: ActivityRecord[];
+};
+
 export type LoginResponse = {
   username: string;
   userId?: string;
@@ -213,6 +314,25 @@ export const api = {
   },
   agents() {
     return request<AgentRecord[]>('/api/admin/agents');
+  },
+  overview(range: TrafficRange) {
+    return request<OverviewResponse>(`/api/admin/overview?range=${encodeURIComponent(range)}`);
+  },
+  desktops() {
+    return request<DesktopRecord[]>('/api/admin/desktops');
+  },
+  webapps() {
+    return request<WebAppRecord[]>('/api/admin/webapps');
+  },
+  closeSession(sessionId: string) {
+    return request<{ ok: boolean }>(`/api/admin/sessions/${sessionId}/close`, { method: 'POST' });
+  },
+  activity(objectType: ActivityObjectType = 'all', query = '') {
+    const params = new URLSearchParams({ objectType });
+    if (query.trim()) {
+      params.set('q', query.trim());
+    }
+    return request<ActivityResponse>(`/api/admin/activity?${params.toString()}`).then((response) => response.items ?? []);
   },
   events() {
     return request<EventLog[]>('/api/admin/events');
