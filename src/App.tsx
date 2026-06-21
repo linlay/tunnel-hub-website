@@ -903,7 +903,6 @@ function WebAppsView({
   return (
     <section className="stack">
       <section className="panel">
-        <PanelTitle icon={<Plus size={18} />} title={routeForm.id ? t('editWebApp') : t('deployWebApp')} />
         <form className="deploy-form" onSubmit={onSave}>
           {!routeForm.id ? (
             <div className="segmented" role="group" aria-label={t('deployWebApp')}>
